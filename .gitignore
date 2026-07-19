@@ -1,0 +1,28 @@
+# Secrets & config sensible
+.env
+config/roles.yml
+config/users.yml
+
+# Données runtime
+data/
+backups/
+
+# Notes personnelles locales
+docs/dev-depuis-mac.md
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

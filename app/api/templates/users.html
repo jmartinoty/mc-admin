@@ -1,0 +1,105 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Comptes</h1>
+
+<section class="card users-card">
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Comptes mc-admin</caption>
+      <thead><tr><th>Compte</th><th>Rôle</th><th></th></tr></thead>
+      <tbody>
+        {% for a in accounts %}
+        <tr>
+          <td><b>{{ a.display_name }}</b>{% if a.display_name != a.username %} <span class="muted">({{ a.username }})</span>{% endif %}
+            {% if a.is_me %}<span class="chip manual">toi</span>{% endif %}</td>
+          <td>
+            {% if a.is_me %}
+            {{ a.role }}
+            {% else %}
+            <form method="post" action="/actions/users/role" class="inline role-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="username" value="{{ a.username }}">
+              <select name="role">
+                {% for r in roles %}<option value="{{ r }}" {% if r == a.role %}selected{% endif %}>{{ r }}</option>{% endfor %}
+              </select>
+              <button class="small">OK</button>
+            </form>
+            {% endif %}
+          </td>
+          <td class="backup-acts">
+            <button type="button" class="txtbtn js-reset-open" data-username="{{ a.username }}">Réinitialiser le mot de passe</button>
+            {% if not a.is_me %}
+            <form method="post" action="/actions/users/delete" class="js-confirm-form"
+                  data-confirm="Supprimer le compte « {{ a.username }} » ? Il ne pourra plus se connecter.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="username" value="{{ a.username }}">
+              <button type="button" class="txtbtn danger-link js-confirm-open">Supprimer</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Créer un compte</h2>
+  <form method="post" action="/actions/users/add" class="server-add-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="inline sched-form">
+      <label>Nom d'utilisateur
+        <input name="username" required maxlength="32" pattern="[A-Za-z0-9_\-]{3,32}" autocomplete="off">
+      </label>
+      <label>Rôle
+        <select name="role">
+          {% for r in roles %}<option value="{{ r }}" {% if r == "viewer" %}selected{% endif %}>{{ r }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Mot de passe initial
+        <input type="password" name="password" minlength="8" required autocomplete="new-password">
+      </label>
+    </div>
+    <p class="muted rules-hint">La personne pourra changer son mot de passe et
+      son pseudo depuis son menu profil.</p>
+    <button class="small">Créer</button>
+  </form>
+</section>
+
+<dialog class="player-dialog" id="resetDialog" aria-labelledby="resetTitle">
+  <form method="post" action="/actions/users/reset-password" class="player-dialog-box">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="username" id="resetUsername">
+    <h2 id="resetTitle">Réinitialiser le mot de passe</h2>
+    <label>Nouveau mot de passe
+      <input type="password" name="password" minlength="8" required autocomplete="new-password">
+    </label>
+    <div class="dialog-actions">
+      <button type="button" class="txtbtn" id="resetCancel">Annuler</button>
+      <button>Réinitialiser</button>
+    </div>
+  </form>
+</dialog>
+
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  var resetDialog = document.getElementById("resetDialog");
+  Array.prototype.forEach.call(document.querySelectorAll(".js-reset-open"), function (btn) {
+    btn.addEventListener("click", function () {
+      document.getElementById("resetUsername").value = btn.getAttribute("data-username");
+      document.getElementById("resetTitle").textContent =
+        "Réinitialiser le mot de passe de « " + btn.getAttribute("data-username") + " »";
+      if (resetDialog.showModal) resetDialog.showModal();
+    });
+  });
+  document.getElementById("resetCancel").addEventListener("click", function () {
+    if (resetDialog.close) resetDialog.close();
+  });
+
+})();
+</script>
+{% endblock %}

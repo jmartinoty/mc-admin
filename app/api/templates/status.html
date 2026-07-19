@@ -1,0 +1,347 @@
+{% extends "shell.html" %}
+{% block page %}
+{% if status is none %}
+<section class="card server-card" data-dashboard-mode="{{ dashboard_mode }}">
+  <div class="st-name">
+    <h1 class="srv-name">Serveur injoignable</h1>
+    <span class="pill bad"><span class="led"></span>hors de portée</span>
+  </div>
+  <p class="muted">mc-admin n'arrive pas à joindre le serveur Minecraft.
+    Vérifie que le conteneur du serveur et le proxy Docker sont démarrés et
+    correctement renseignés dans la configuration.</p>
+</section>
+{% else %}
+{% set running = status.container.running %}
+
+<section class="card server-card" data-dashboard-mode="{{ dashboard_mode }}">
+  <div class="status-top">
+    <div class="st-id">
+      <div class="st-name">
+        <h1 class="srv-name">{{ status.container.name if show_runtime_health else "Serveur Minecraft" }}</h1>
+        <span class="vitals-state" id="vitalsState">{% if game_state == "starting" %}<span class="pill warn"><span class="led"></span>démarrage en cours</span>{% elif game_state == "unreachable" %}<span class="pill warn"><span class="led"></span>en ligne · jeu injoignable</span>{% else %}<span class="pill {{ 'ok' if running else 'bad' }}"><span class="led"></span>{{ "en ligne" if running else "arrêté" }}</span>{% endif %}
+        {% if show_runtime_health and status.container.health %}<span class="pill neutral">{{ status.container.health }}</span>{% endif %}
+        {% if uptime %}<span class="muted uptime-note">depuis {{ uptime }}</span>{% endif %}</span>
+        {% if server_address %}
+        <button type="button" class="addr-chip" id="copyAddress" data-address="{{ server_address }}"
+                title="Copier l'adresse à entrer dans Minecraft">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg>
+          {{ server_address }}
+        </button>
+        {% endif %}
+      </div>
+      {% if can_update or mod_count is not none %}
+      <div class="verline">
+        {% if can_update %}
+        {% if update is none %}
+          <span class="muted">version indisponible (Mojang/Prometheus injoignable)</span>
+        {% else %}
+          <span class="k">version</span> <b>{{ update.current_version or "?" }}</b>
+          {% if game_state %}<span class="badge" title="le jeu ne répond pas encore">vérification…</span>{% elif update.update_available %}<span class="badge ko">màj dispo</span>{% else %}<span class="badge ok">à jour</span>{% endif %}
+          {% if update.changelog_url %}<a href="{{ update.changelog_url }}" target="_blank" rel="noopener">changelog ↗</a>{% endif %}
+        {% endif %}
+        {% endif %}
+        {% if mod_count is not none %}
+          <a href="/mods">{{ mod_count }} mod{{ "s" if mod_count != 1 else "" }} installé{{ "s" if mod_count != 1 else "" }}</a>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="iconbtns">
+      {% if can_start %}
+      <form method="post" action="/actions/start">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="ibtn play"{% if running %} disabled title="Le serveur tourne déjà"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>Démarrer
+        </button>
+      </form>
+      {% endif %}
+      {% if can_restart %}
+      <button type="button" class="ibtn restart" id="restartOpen"{% if not running %} disabled title="Le serveur est arrêté"{% endif %}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 3v5h5"/></svg>Redémarrer
+      </button>
+      {% endif %}
+      {% if can_stop %}
+      <form method="post" action="/actions/stop" class="js-confirm-form"
+            data-confirm="Arrêter le serveur ? Il restera éteint jusqu'à un démarrage manuel.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="ibtn stop"{% if not running %} disabled title="Le serveur est déjà arrêté"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>Arrêter
+        </button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if can_update and update and update.update_available %}
+  <form method="post" action="/actions/update" class="update-inline js-confirm-form"
+        data-confirm="Mettre à jour le serveur ? Il sera brièvement coupé (pull de l'image + recréation du conteneur).">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="inline"><input type="checkbox" name="force" value="yes" style="width:auto"> forcer même si des joueurs sont connectés</label>
+    <button class="small">Mettre à jour</button>
+  </form>
+  {% endif %}
+
+  {% if status.players_available and status.players_online %}
+  <p class="online-line">
+    <span class="pill ok pill-sm"><span class="led"></span>{{ status.players_online|length }} en ligne</span>
+    {% for p in status.players_online %}<span class="online-name">{{ p.name }}</span>{% endfor %}
+  </p>
+  {% elif not status.players_available %}
+  <p class="online-line muted">Liste des joueurs indisponible (RCON injoignable).</p>
+  {% endif %}
+
+  {% if metrics %}
+  <div class="metrics">
+    {% for m in metrics %}
+    <div class="metric">
+      <div class="metric-value">
+        {% if m.value is not none %}
+          {%- set v = m.value | round(1) -%}
+          {{ v | int if v == (v | int) else v }}<span class="unit">{{ m.unit }}</span>
+        {% else %}<span class="muted">–</span>{% endif %}
+      </div>
+      {% set points = spark_points(m.history) %}
+      {% if points %}
+      <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points="{{ points }}"/>
+      </svg>
+      {% endif %}
+      <div class="metric-label">{{ m.label }}{% if points %} <span class="spark-hint">24 h</span>{% endif %}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% elif metrics is none %}
+  <p class="muted metrics-missing">Métriques indisponibles (Prometheus injoignable).</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if show_infra and infra %}
+<section class="card infra-card">
+  <h2>Infrastructure</h2>
+  <div class="infra-list" id="vitalsInfra">
+    {% for st in infra %}
+    <div class="infra-item">
+      <span class="pill {{ 'ok' if st.running else 'bad' }} pill-sm"><span class="led"></span>{{ st.name }}</span>
+      <span class="muted">{{ st.status }}{% if st.running and st.started_at %} · depuis {{ st.started_at.strftime("%d/%m %H:%M") }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if can_game %}
+<section class="card game-card">
+  <h2>Jeu <a class="txtbtn card-more" href="/game">tous les réglages →</a></h2>
+  {% if game is none %}
+  <p class="muted">Réglages indisponibles (serveur injoignable).</p>
+  {% else %}
+  <div class="game-grid">
+    <div class="game-group">
+      <span class="k">Difficulté</span>
+      <form method="post" action="/actions/game/difficulty" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <select name="level">
+          {% for lvl, label in (("peaceful", "Paisible"), ("easy", "Facile"), ("normal", "Normale"), ("hard", "Difficile")) %}
+          <option value="{{ lvl }}" {% if game.difficulty == lvl %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button class="small">OK</button>
+      </form>
+    </div>
+    <div class="game-group">
+      <span class="k">Règles</span>
+      <div class="game-rules">
+        {% for name, label, value in (
+          ("keep_inventory", "Garder l'inventaire à la mort", game.keep_inventory),
+          ("mob_griefing", "Les créatures cassent le terrain", game.mob_griefing),
+          ("advance_time", "Cycle jour/nuit", game.daylight_cycle),
+        ) %}
+        <form method="post" action="/actions/game/gamerule" class="game-rule">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="name" value="{{ name }}">
+          {% if value is none %}
+          <span class="muted">{{ label }} : ?</span>
+          {% else %}
+          <input type="hidden" name="value" value="{{ 'false' if value else 'true' }}">
+          <label class="switch" title="{{ 'Désactiver' if value else 'Activer' }}">
+            <input type="checkbox" {% if value %}checked{% endif %} onchange="window.mc.submitForm(this.form)">
+            <span class="track"><span class="thumb"></span></span>
+          </label>
+          <span class="rule-label">{{ label }}
+            {% if rule_help.get(name) %}<span class="info-tip" tabindex="0" aria-label="{{ rule_help[name] }}">?<span class="tip-body">{{ rule_help[name] }}</span></span>{% endif %}
+          </span>
+          {% endif %}
+        </form>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="game-group">
+      <span class="k">Météo & heure</span>
+      <div class="game-env">
+        {% for kind, label in (("clear", "☀ Beau temps"), ("rain", "🌧 Pluie"), ("thunder", "⛈ Orage")) %}
+        <form method="post" action="/actions/game/weather">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="kind" value="{{ kind }}">
+          <button class="small env-btn">{{ label }}</button>
+        </form>
+        {% endfor %}
+        {% for moment, label in (("day", "🌅 Jour"), ("night", "🌙 Nuit")) %}
+        <form method="post" action="/actions/game/time">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="moment" value="{{ moment }}">
+          <button class="small env-btn">{{ label }}</button>
+        </form>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if can_logs %}
+<div class="term{% if can_console %} term-open{% endif %}">
+  <div class="term-head">
+    <span class="k">terminal · latest.log{% if can_console %} + console rcon{% endif %}</span>
+    <span class="rec"><i></i>live</span>
+  </div>
+  <div class="term-filter term-filter-in">
+    <input id="termFilterText" placeholder="filtrer les logs…" autocomplete="off" aria-label="filtrer les logs">
+    <div class="term-filter-lvls" id="termFilterLvls">
+      <button type="button" data-lvl="all" class="on">tous</button>
+      <button type="button" data-lvl="info">info</button>
+      <button type="button" data-lvl="warn">warn</button>
+      <button type="button" data-lvl="err">erreurs</button>
+    </div>
+  </div>
+  <div id="status-body">
+    {% include "partials/status_body.html" %}
+  </div>
+</div>
+{% else %}
+<div id="status-body" hidden></div>
+{% endif %}
+
+{% if can_logs or can_console %}
+<div class="term-foot{% if not can_logs %} term-solo{% endif %}" id="terminal">
+  {% if can_console %}
+  {% if last_command %}
+  <div class="term-result">
+    <div class="ln"><span class="pfx">mc ›</span> {{ last_command }}</div>
+    {% if last_error %}<div class="ln lv-err">{{ last_error }}</div>{% else %}<pre class="term-out">{{ last_output }}</pre>{% endif %}
+  </div>
+  {% endif %}
+  <form method="post" action="/actions/rcon" class="term-prompt">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <span class="pfx">mc&nbsp;›</span>
+    <input name="command" placeholder="commande RCON — / pour focus, ↑↓ historique"
+           required autocomplete="off" aria-label="commande RCON"
+           title="Astuce : / pour focus le terminal · Échap pour en sortir · ↑↓ pour rappeler les commandes">
+    <button class="term-send">envoyer</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if can_restart %}
+<dialog class="player-dialog" id="restartDialog"
+        aria-labelledby="restartDialogTitle" aria-describedby="restartDialogDescription">
+  <div class="player-dialog-box">
+    <form method="post" action="/actions/schedule-restart">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h2 id="restartDialogTitle">Redémarrer le serveur</h2>
+      <p class="muted" id="restartDialogDescription">Les joueurs voient un décompte in-game avant la coupure.</p>
+      <label>
+        Délai avant redémarrage
+        <span class="mini restart-delay"><input name="seconds" type="number" min="0" step="5" value="30" required><span>s</span></span>
+        <span class="muted delay-hint">0 = immédiat, sans avertissement</span>
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="txtbtn" id="restartCancel">Annuler</button>
+        <button class="danger">Redémarrer</button>
+      </div>
+    </form>
+    <div class="po-sep recurring-sep"></div>
+    <form method="post" action="/actions/recurring-restart" class="recurring-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if recurring_restart %}
+      <p class="muted">↻ Quotidien actif : tous les jours à <b>{{ recurring_restart.time_hhmm }}</b>
+        (préavis {{ recurring_restart.lead_seconds // 60 }} min).</p>
+      <input type="hidden" name="disable" value="1">
+      <button class="txtbtn warn">Désactiver le redémarrage quotidien</button>
+      {% else %}
+      <label>
+        Redémarrage quotidien (optionnel)
+        <span class="recurring-row">
+          <input name="time_hhmm" type="time" value="06:00">
+          <select name="lead_seconds" class="mini-select" title="Préavis in-game">
+            <option value="300" selected>préavis 5 min</option>
+            <option value="600">préavis 10 min</option>
+            <option value="60">préavis 1 min</option>
+          </select>
+          <button class="txtbtn">Activer</button>
+        </span>
+      </label>
+      {% endif %}
+    </form>
+  </div>
+</dialog>
+<script>
+(function () {
+  var btn = document.getElementById("restartOpen");
+  var dialog = document.getElementById("restartDialog");
+  if (!btn || !dialog) return;
+  btn.addEventListener("click", function () {
+    if (dialog.showModal) dialog.showModal();
+    else dialog.setAttribute("open", "");
+    var input = dialog.querySelector("input[name='seconds']");
+    if (input) { input.focus(); input.select(); }
+  });
+  document.getElementById("restartCancel").addEventListener("click", function () {
+    if (dialog.close) dialog.close();
+    else dialog.removeAttribute("open");
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}
+
+{% block page_scripts %}<script src="/static/app.js?v=20260704-terminal"></script>
+<script>
+(function () {
+  // UI-3 : signes vitaux vivants — pastille/uptime + Infrastructure toutes
+  // les 5 s. Échec réseau silencieux : l'état affiché reste le dernier connu.
+  var state = document.getElementById("vitalsState");
+  var infra = document.getElementById("vitalsInfra");
+  if (state || infra) {
+    function pollVitals() {
+      fetch("/fragments/vitals", { headers: { "X-Requested-With": "fetch" } })
+        .then(function (res) { return res.ok ? res.text() : null; })
+        .then(function (html) {
+          if (!html) return;
+          var tpl = document.createElement("template");
+          tpl.innerHTML = html;
+          var s = tpl.content.querySelector('[data-vitals="state"]');
+          var i = tpl.content.querySelector('[data-vitals="infra"]');
+          if (state && s) state.innerHTML = s.innerHTML;
+          if (infra && i && i.innerHTML.trim()) infra.innerHTML = i.innerHTML;
+        })
+        .catch(function () {})
+        .finally(function () { setTimeout(pollVitals, 5000); });
+    }
+    setTimeout(pollVitals, 5000);
+  }
+})();
+(function () {
+  var chip = document.getElementById("copyAddress");
+  if (chip && navigator.clipboard) {
+    chip.addEventListener("click", function () {
+      navigator.clipboard.writeText(chip.getAttribute("data-address")).then(function () {
+        window.mc && window.mc.toast && window.mc.toast("Adresse copiée — colle-la dans Minecraft.");
+      });
+    });
+  }
+})();
+</script>{% endblock %}

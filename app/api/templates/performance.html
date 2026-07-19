@@ -1,0 +1,191 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Performances</h1>
+
+{% if perf is none %}
+<section class="card">
+  <h2>Données indisponibles</h2>
+  <p class="muted">Prometheus est injoignable — les mesures de performance
+    (TPS, MSPT, entités, chunks) viennent de lui. Vérifie la stack de
+    supervision puis recharge la page.</p>
+</section>
+{% else %}
+
+<section class="metrics perf-tiles">
+  <div class="metric">
+    <div class="metric-value">{% if perf.tps is not none %}{{ "%.1f"|format(perf.tps) }}{% else %}<span class="muted">–</span>{% endif %}</div>
+    <div class="metric-label">TPS <span class="info-tip" tabindex="0" aria-label="Ticks par seconde — 20 = parfait. En dessous, le temps du jeu ralentit.">?<span class="tip-body">Ticks par seconde — 20 = parfait. En dessous, le temps du jeu ralentit.</span></span></div>
+  </div>
+  <div class="metric">
+    <div class="metric-value {{ 'perf-bad' if perf.mspt_mean is not none and perf.mspt_mean > 50 }}">{% if perf.mspt_mean is not none %}{{ "%.1f"|format(perf.mspt_mean) }} <span class="unit">ms</span>{% else %}<span class="muted">–</span>{% endif %}</div>
+    <div class="metric-label">MSPT moyen <span class="info-tip" tabindex="0" aria-label="Durée moyenne d'un tick. Au-delà de 50 ms, le serveur ne tient plus 20 TPS.">?<span class="tip-body">Durée moyenne d'un tick. Au-delà de 50 ms, le serveur ne tient plus 20 TPS.</span></span></div>
+  </div>
+  <div class="metric">
+    <div class="metric-value {{ 'perf-bad' if perf.mspt_max is not none and perf.mspt_max > 50 }}">{% if perf.mspt_max is not none %}{{ "%.1f"|format(perf.mspt_max) }} <span class="unit">ms</span>{% else %}<span class="muted">–</span>{% endif %}</div>
+    <div class="metric-label">MSPT max</div>
+  </div>
+  <div class="metric">
+    <div class="metric-value">{% if perf.entities_total is not none %}{{ perf.entities_total }}{% else %}<span class="muted">–</span>{% endif %}</div>
+    <div class="metric-label">Entités chargées</div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="perf-head">
+    <h2>MSPT
+      {% if mspt_chart and mspt_chart.over %}<span class="badge ko">seuil dépassé</span>
+      {% elif mspt_chart %}<span class="badge ok">sous le seuil</span>{% endif %}
+    </h2>
+    <nav class="perf-ranges" aria-label="Plage du graphe MSPT">
+      {% for key, label in perf_ranges %}
+      <a class="rangelink {{ 'on' if key == perf_range }}" href="/performance?range={{ key }}"
+         {% if key == perf_range %}aria-current="true"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+  </div>
+  {% if mspt_chart %}
+  <svg class="perf-chart" viewBox="0 0 600 140" preserveAspectRatio="none" role="img"
+       aria-label="Pire MSPT par fenêtre de {{ mspt_chart.window }}, seuil à 50 millisecondes">
+    <line class="perf-threshold" x1="0" y1="{{ mspt_chart.threshold_y }}" x2="600" y2="{{ mspt_chart.threshold_y }}"/>
+    <polyline class="perf-line" points="{{ mspt_chart.points }}"/>
+  </svg>
+  <div class="perf-axis" aria-hidden="true">
+    {% for t in mspt_chart.ticks %}<span>{{ t }}</span>{% endfor %}
+  </div>
+  <p class="muted perf-legend">Pic : {{ mspt_chart.max }} ms · chaque point est le
+    pire moment de sa fenêtre de {{ mspt_chart.window }} — un à-coup ne peut pas se
+    cacher entre deux points · la ligne pointillée marque 50 ms : au-dessus,
+    le serveur ralentit (moins de 20 TPS).</p>
+  {% else %}
+  <p class="muted">Pas encore assez d'historique pour tracer la courbe sur cette plage.</p>
+  {% endif %}
+</section>
+
+<div class="perf-cols">
+<section class="card">
+  <h2>Top des entités <span class="bc-sub">par monde, chunks chargés uniquement</span></h2>
+  {% if perf.entity_top %}
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Entités les plus nombreuses par monde</caption>
+      <thead><tr><th>Entité</th><th>Monde</th><th class="tnum">Nombre</th></tr></thead>
+      <tbody>
+        {% for e in perf.entity_top %}
+        <tr>
+          <td>{{ e.type.replace("_", " ") }}</td>
+          <td class="muted">{{ world_label(e.world) }}</td>
+          <td class="tnum"><b>{{ e.count }}</b></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted rules-hint">Une ferme à mobs qui déborde ou un enclos
+    surpeuplé apparaît ici en tête — c'est la cause n° 1 de lag.</p>
+  {% else %}
+  <p class="muted">Aucune entité chargée pour le moment — sans joueur
+    connecté, les chunks (et leurs créatures) se déchargent.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Chunks chargés <span class="bc-sub">par monde</span></h2>
+  {% if perf.chunks %}
+  <div class="perf-worlds">
+    {% for w in perf.chunks %}
+    <div class="perf-world">
+      <div class="perf-world-head">
+        <span>{{ world_label(w.world) }}</span>
+        <b>{{ w.count if w.count is not none else "–" }}</b>
+      </div>
+      {% set points = spark_points(w.history) %}
+      {% if points %}
+      <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points="{{ points }}"/>
+      </svg>
+      <span class="spark-hint">24 h</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <p class="muted rules-hint">Plus de chunks chargés = plus de travail par
+    tick. Un monde qui reste haut sans joueur dedans mérite un coup d'œil
+    (chunk loaders, portails traversés…).</p>
+  {% else %}
+  <p class="muted">Aucune donnée de chunks pour le moment.</p>
+  {% endif %}
+</section>
+</div>
+
+{% endif %}
+
+{% if can_spark %}
+<section class="card">
+  <h2>Profil spark <span class="bc-sub">analyse fine par chunk, mod et tick</span></h2>
+  {% if profiling_seconds %}
+  <p class="muted" id="sparkCountdown" data-seconds="{{ profiling_seconds }}"
+     data-stop-url="/actions/performance/profile/stop" data-csrf="{{ csrf_token }}">
+    Profilage en cours… <b><span id="sparkRemaining">{{ profiling_seconds }}</span> s</b> —
+    reste sur cette page, le profil sera sauvegardé automatiquement.</p>
+  {% else %}
+  <form method="post" action="/actions/performance/profile" class="inline spark-actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Durée
+      <select name="seconds">
+        <option value="30">30 s</option>
+        <option value="60" selected>60 s</option>
+        <option value="120">120 s</option>
+      </select>
+    </label>
+    <button class="small">Profiler maintenant</button>
+  </form>
+  <p class="muted rules-hint">À lancer pendant que ça rame (avec des joueurs
+    connectés) : le profil dit précisément quel chunk, quelle entité ou quel
+    mod consomme le tick. Ouvre ensuite
+    <a href="https://spark.lucko.me" target="_blank" rel="noopener">spark.lucko.me ↗</a>
+    et glisse-y le fichier téléchargé.</p>
+  {% endif %}
+  {% if spark_profiles %}
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Profils de performance spark disponibles</caption>
+      <thead><tr><th>Profil</th><th>Taille</th><th>Créé le</th><th></th></tr></thead>
+      <tbody>
+        {% for p in spark_profiles %}
+        <tr>
+          <td class="tnum">{{ p.filename }}</td>
+          <td class="muted">{{ (p.size_bytes / 1024) | round(1) }} Kio</td>
+          <td class="muted">{{ p.created_at.strftime("%d/%m/%Y %H:%M") }}</td>
+          <td><a class="button small" href="/performance/spark/{{ p.filename }}/download">Télécharger</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% elif not profiling_seconds %}
+  <p class="muted">Aucun profil sauvegardé pour le moment.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  var box = document.getElementById("sparkCountdown");
+  if (!box) return;
+  var remaining = parseInt(box.getAttribute("data-seconds"), 10);
+  var label = document.getElementById("sparkRemaining");
+  var timer = setInterval(function () {
+    remaining -= 1;
+    if (label) label.textContent = remaining;
+    if (remaining > 0) return;
+    clearInterval(timer);
+    var body = new URLSearchParams();
+    body.set("csrf_token", box.getAttribute("data-csrf"));
+    fetch(box.getAttribute("data-stop-url"), { method: "POST", body: body })
+      .finally(function () { window.location = "/performance"; });
+  }, 1000);
+})();
+</script>
+{% endblock %}

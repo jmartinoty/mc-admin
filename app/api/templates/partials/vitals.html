@@ -1,0 +1,26 @@
+{# Fragment pollé (UI-3) : pastille serveur + uptime, et liste Infrastructure.
+   Deux racines identifiées — le JS de status.html remplace l'innerHTML des
+   conteneurs correspondants. Rendu 100 % serveur, comme status_body.html. #}
+<div data-vitals="state">
+  {% if status %}
+  {% if game_state == "starting" %}
+  <span class="pill warn"><span class="led"></span>démarrage en cours</span>
+  {% elif game_state == "unreachable" %}
+  <span class="pill warn"><span class="led"></span>en ligne · jeu injoignable</span>
+  {% else %}
+  <span class="pill {{ 'ok' if status.container.running else 'bad' }}"><span class="led"></span>{{ "en ligne" if status.container.running else "arrêté" }}</span>
+  {% endif %}
+  {% if show_runtime_health and status.container.health %}<span class="pill neutral">{{ status.container.health }}</span>{% endif %}
+  {% if uptime %}<span class="muted uptime-note">depuis {{ uptime }}</span>{% endif %}
+  {% else %}
+  <span class="pill bad"><span class="led"></span>injoignable</span>
+  {% endif %}
+</div>
+<div data-vitals="infra">
+  {% for st in infra or [] %}
+  <div class="infra-item">
+    <span class="pill {{ 'ok' if st.running else 'bad' }} pill-sm"><span class="led"></span>{{ st.name }}</span>
+    <span class="muted">{{ st.status }}{% if st.running and st.started_at %} · depuis {{ st.started_at.strftime("%d/%m %H:%M") }}{% endif %}</span>
+  </div>
+  {% endfor %}
+</div>

@@ -1,0 +1,127 @@
+<div class="player-panel-content" data-player-panel data-player-name="{{ player_name }}">
+  <div class="pd-head player-panel-head">
+    <span class="pavatar pd-avatar">
+      <img class="pavatar-img" loading="lazy" alt=""
+           src="https://mc-heads.net/avatar/{{ stats.uuid if stats and stats.uuid else player_name }}/64"
+           onerror="this.remove()">
+      <span aria-hidden="true">{{ player_name[0]|upper }}</span>
+    </span>
+    <div class="player-panel-identity">
+      <strong>{{ player_name }}</strong>
+      <span class="chips">
+        {% if summary %}
+        <span class="pill {{ 'ok' if summary.online else 'neutral' }} pill-sm"><span class="led"></span>{{ "en ligne" if summary.online else "hors ligne" }}</span>
+        {% endif %}
+        {% if op_entry %}<span class="chip op">OP {{ op_entry.level }}</span>{% endif %}
+        {% if pending_op_level %}
+        <span class="chip pending">
+          niveau {{ pending_op_level.level }} {{ "en cours" if pending_op_level.applying else "en attente" }}
+        </span>
+        {% endif %}
+        {% if is_whitelisted %}<span class="chip wl">whitelist</span>{% endif %}
+        {% if is_banned %}<span class="chip ban">banni</span>{% endif %}
+      </span>
+    </div>
+  </div>
+
+  {% if player_actions %}
+  <section class="player-panel-section player-panel-actions">
+    <h2>Actions</h2>
+    <div class="player-action-list">
+      {% if can_kick and summary and summary.online %}
+      <form method="post" action="/actions/kick" class="js-player-dialog"
+            data-dialog="kick" data-player="{{ player_name }}" data-title="Kick {{ player_name }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="redirect_to" value="/players">
+        <input type="hidden" name="player" value="{{ player_name }}">
+        <input type="hidden" name="reason" value="">
+        <button type="button" class="small">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M16 17l5-5-5-5M21 12H9M9 5H6a2 2 0 00-2 2v10a2 2 0 002 2h3"/></svg>
+          Kick
+        </button>
+      </form>
+      {% endif %}
+
+      {% if can_whitelist %}
+        {% if is_whitelisted %}
+        <form method="post" action="/actions/whitelist/remove" class="js-player-dialog"
+              data-dialog="confirm" data-player="{{ player_name }}"
+              data-title="Retirer {{ player_name }} de la whitelist">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="redirect_to" value="/players">
+          <input type="hidden" name="player" value="{{ player_name }}">
+          <button type="button" class="small">Retirer de la whitelist</button>
+        </form>
+        {% else %}
+        <form method="post" action="/actions/whitelist/add">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="redirect_to" value="/players">
+          <input type="hidden" name="player" value="{{ player_name }}">
+          <button class="small">Ajouter à la whitelist</button>
+        </form>
+        {% endif %}
+      {% endif %}
+
+      {% if can_bans %}
+        {% if is_banned %}
+        <form method="post" action="/actions/pardon" class="js-player-dialog"
+              data-dialog="confirm" data-player="{{ player_name }}"
+              data-title="Lever le bannissement de {{ player_name }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="redirect_to" value="/players">
+          <input type="hidden" name="player" value="{{ player_name }}">
+          <button type="button" class="small">Lever le bannissement</button>
+        </form>
+        {% else %}
+        <form method="post" action="/actions/ban" class="js-player-dialog"
+              data-dialog="ban" data-player="{{ player_name }}" data-title="Bannir {{ player_name }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="redirect_to" value="/players">
+          <input type="hidden" name="player" value="{{ player_name }}">
+          <input type="hidden" name="reason" value="">
+          <input type="hidden" name="hours" value="">
+          <button type="button" class="small danger">Bannir</button>
+        </form>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    {% if can_op %}
+    <div class="player-op-actions">
+      <form method="post" action="/actions/op/add">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="redirect_to" value="/players">
+        <input type="hidden" name="player" value="{{ player_name }}">
+        <label>
+          Niveau opérateur
+          <select name="level" class="mini-select">
+            {% for lvl, label in op_levels %}
+            <option value="{{ lvl }}" {% if (pending_op_level and lvl == pending_op_level.level) or (not pending_op_level and op_entry and lvl == op_entry.level) or (not pending_op_level and not op_entry and lvl == 4) %}selected{% endif %}>OP {{ lvl }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="small">{{ "Enregistrer" if op_entry else "Passer opérateur" }}</button>
+      </form>
+      {% if op_entry %}
+      <form method="post" action="/actions/op/remove" class="js-player-dialog"
+            data-dialog="confirm" data-player="{{ player_name }}"
+            data-title="Retirer OP à {{ player_name }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="redirect_to" value="/players">
+        <input type="hidden" name="player" value="{{ player_name }}">
+        <button type="button" class="small danger">Retirer OP</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% set panel_mode = true %}
+  {% include "partials/player_detail_sections.html" %}
+
+  <a class="player-panel-full-link" href="/players/{{ player_name }}">
+    Ouvrir la fiche complète
+    <span aria-hidden="true">→</span>
+  </a>
+</div>

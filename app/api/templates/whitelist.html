@@ -1,0 +1,31 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Whitelist</h1>
+<section class="card">
+  {% if whitelist is none %}
+    <p class="muted">Whitelist indisponible (RCON injoignable).</p>
+  {% else %}
+    {% if whitelist %}
+    <ul class="players">
+      {% for name in whitelist %}
+      <li>{{ name }}
+        <form method="post" action="/actions/whitelist/remove" class="js-confirm-form" data-confirm="Retirer {{ name }} de la whitelist ?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="player" value="{{ name }}">
+          <button class="link">retirer</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">Aucun joueur whitelisté.</p>
+    {% endif %}
+    <form method="post" action="/actions/whitelist/add" class="inline addform">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input name="player" placeholder="Pseudo Minecraft" required
+             pattern="[A-Za-z0-9_]{3,16}" title="3 à 16 caractères : lettres, chiffres, _">
+      <button class="small">Ajouter</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

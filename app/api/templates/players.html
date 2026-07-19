@@ -1,0 +1,629 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Joueurs</h1>
+
+{% set ns = namespace(online=0, op=0, wl=0, ban=0) %}
+{% for p in players %}
+  {% set player_key = p.player|lower %}
+  {% if p.online %}{% set ns.online = ns.online + 1 %}{% endif %}
+  {% if ops_by_key is not none and player_key in ops_by_key %}{% set ns.op = ns.op + 1 %}{% endif %}
+  {% if whitelist_names is not none and player_key in whitelist_keys %}{% set ns.wl = ns.wl + 1 %}{% endif %}
+  {% if player_key in banned_keys %}{% set ns.ban = ns.ban + 1 %}{% endif %}
+{% endfor %}
+
+{% if players %}
+<div class="filters" id="playerFilters" role="group" aria-label="Filtrer les joueurs">
+  <button type="button" class="on" data-filter="all" aria-pressed="true">Tous · {{ players|length }}</button>
+  <button type="button" data-filter="online" aria-pressed="false">En ligne · {{ ns.online }}</button>
+  {% if can_op %}<button type="button" data-filter="op" aria-pressed="false">Opérateurs · {{ ns.op }}</button>{% endif %}
+  {% if can_whitelist %}<button type="button" data-filter="wl" aria-pressed="false">Whitelist · {{ ns.wl }}</button>{% endif %}
+  {% if can_bans %}<button type="button" data-filter="ban" aria-pressed="false">Bannis · {{ ns.ban }}</button>{% endif %}
+  <span class="filters-spacer"></span>
+  <input type="search" id="playerSearch" class="player-search" placeholder="Rechercher un pseudo…"
+         aria-label="Rechercher un pseudo" autocomplete="off">
+  <select id="playerSort" class="mini-select" aria-label="Trier les joueurs">
+    <option value="default">Tri : par défaut</option>
+    <option value="online">Tri : en ligne d'abord</option>
+    <option value="lastseen">Tri : dernière connexion</option>
+    <option value="playtime">Tri : temps de jeu</option>
+    <option value="name">Tri : pseudo A→Z</option>
+  </select>
+</div>
+{% endif %}
+
+<section class="card players-card">
+  {% if players %}
+  <p class="muted players-empty" id="playersEmpty" hidden>Aucun joueur dans cette vue pour le moment.</p>
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Liste des joueurs et actions disponibles</caption>
+      <thead>
+        <tr>
+          <th>Joueur</th>
+          <th>Statut</th>
+          <th>Temps de jeu</th>
+          <th>Dernière connexion</th>
+          {% if player_actions %}<th>Actions</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in players %}
+        {% set player_key = p.player|lower %}
+        {% set is_whitelisted = whitelist_names is not none and player_key in whitelist_keys %}
+        {% set op_entry = ops_by_key[player_key] if ops_by_key is not none and player_key in ops_by_key else none %}
+        {% set pending_op = pending_op_levels.get(player_key) %}
+        {% set is_banned = player_key in banned_keys %}
+        {% set has_history = player_key in history_names %}
+        {% set vstats = stats_by_key.get(player_key) %}
+        <tr data-online="{{ 1 if p.online else 0 }}"
+            data-op="{{ 1 if op_entry else 0 }}"
+            data-wl="{{ 1 if is_whitelisted else 0 }}"
+            data-ban="{{ 1 if is_banned else 0 }}"
+            data-player="{{ p.player }}"
+            data-time="{% if vstats %}{{ vstats.play_time_seconds|int }}{% elif has_history %}{{ p.total_seconds|int }}{% else %}0{% endif %}"
+            data-last="{% if p.online %}9999999999{% elif has_history and p.last_seen %}{{ p.last_seen.timestamp()|int }}{% elif vstats and vstats.last_played %}{{ vstats.last_played.timestamp()|int }}{% else %}0{% endif %}">
+          <td>
+            <div class="pname">
+              <span class="pavatar">
+                <img class="pavatar-img" loading="lazy" alt=""
+                     src="https://mc-heads.net/avatar/{{ vstats.uuid if vstats and vstats.uuid else p.player }}/40"
+                     onerror="this.remove()">
+                <span aria-hidden="true">{{ p.player[0]|upper }}</span>
+              </span>
+              <a class="pname-link" href="/players/{{ p.player }}"
+                 data-player-panel-url="/players/{{ p.player }}/panel"
+                 data-player-name="{{ p.player }}"><strong>{{ p.player }}</strong></a>
+              <span class="chips">
+                {% if op_entry %}<span class="chip op">OP {{ op_entry.level }}</span>{% endif %}
+                {% if pending_op %}
+                <span class="chip pending" title="{{ 'Application en cours' if pending_op.applying else 'Au prochain redémarrage' }}">
+                  niveau {{ pending_op.level }} {{ "en cours" if pending_op.applying else "en attente" }}
+                </span>
+                {% endif %}
+                {% if is_whitelisted %}<span class="chip wl">whitelist</span>{% endif %}
+                {% if is_banned %}<span class="chip ban">banni</span>{% endif %}
+              </span>
+            </div>
+          </td>
+          <td><span class="pill {{ 'ok' if p.online else 'neutral' }} pill-sm"><span class="led"></span>{{ "en ligne" if p.online else "hors ligne" }}</span></td>
+          <td class="tnum">
+            {% if vstats %}
+              {{ (vstats.play_time_seconds // 3600) | int }} h {{ "%02d"|format(((vstats.play_time_seconds % 3600) // 60) | int) }}
+            {% elif has_history %}
+              {{ (p.total_seconds // 3600) | int }} h {{ "%02d"|format(((p.total_seconds % 3600) // 60) | int) }}
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="tnum muted">
+            {% if p.online %}
+              maintenant
+            {% elif has_history %}
+              {{ p.last_seen.strftime("%d/%m %H:%M") }}
+            {% elif vstats and vstats.last_played %}
+              {# Joueur d'avant mc-admin : dernière partie ESTIMÉE (date du
+                 fichier de stats) — plus honnête que « jamais vu ». #}
+              <span title="estimée — joueur de l'époque pré-mc-admin">avant mc-admin · {{ vstats.last_played.strftime("%d/%m/%Y") }}</span>
+            {% else %}
+              jamais vu
+            {% endif %}
+          </td>
+          {% if player_actions %}
+          <td>
+            <div class="rowacts">
+              {% if can_kick and p.online %}
+              <form method="post" action="/actions/kick" class="scope-all scope-online js-player-dialog"
+                    data-dialog="kick" data-player="{{ p.player }}" data-title="Kick {{ p.player }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="redirect_to" value="/players">
+                <input type="hidden" name="player" value="{{ p.player }}">
+                <input type="hidden" name="reason" value="">
+                <button type="button" class="ract" title="Kick {{ p.player }}" aria-label="Kick {{ p.player }}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M16 17l5-5-5-5M21 12H9M9 5H6a2 2 0 00-2 2v10a2 2 0 002 2h3"/></svg>
+                </button>
+              </form>
+              {% endif %}
+
+              {% if can_op and ops_by_name is not none %}
+              <form method="post" action="/actions/op/add" class="ract-group scope-op">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="redirect_to" value="/players">
+                <input type="hidden" name="player" value="{{ p.player }}">
+                <select name="level" class="mini-select" title="Niveau OP">
+                  {% for lvl, label in op_levels %}
+                  <option value="{{ lvl }}" {% if (pending_op and lvl == pending_op.level) or (not pending_op and op_entry and lvl == op_entry.level) or (not pending_op and not op_entry and lvl == 4) %}selected{% endif %}>OP {{ lvl }}</option>
+                  {% endfor %}
+                </select>
+                <button class="ract"
+                        title="{{ 'Enregistrer le niveau pour le prochain redémarrage' if op_entry else 'Passer opérateur' }}"
+                        aria-label="{{ 'Enregistrer le niveau OP de ' ~ p.player if op_entry else 'Passer ' ~ p.player ~ ' opérateur' }}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8z"/></svg>
+                </button>
+              </form>
+              {% if op_entry %}
+              <form method="post" action="/actions/op/remove" class="scope-op js-player-dialog"
+                    data-dialog="confirm" data-player="{{ p.player }}" data-title="Retirer OP à {{ p.player }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="redirect_to" value="/players">
+                <input type="hidden" name="player" value="{{ p.player }}">
+                <button type="button" class="ract" title="Retirer OP (deop)"
+                        aria-label="Retirer les droits opérateur de {{ p.player }}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8z"/><path d="M4 4l16 16"/></svg>
+                </button>
+              </form>
+              {% endif %}
+              {% endif %}
+
+              {% if can_whitelist and whitelist_names is not none and is_whitelisted %}
+              <form method="post" action="/actions/whitelist/remove" class="scope-wl js-player-dialog"
+                    data-dialog="confirm" data-player="{{ p.player }}" data-title="Retirer {{ p.player }} de la whitelist">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="redirect_to" value="/players">
+                <input type="hidden" name="player" value="{{ p.player }}">
+                <button type="button" class="ract" title="Retirer de la whitelist"
+                        aria-label="Retirer {{ p.player }} de la whitelist">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 016-6h2"/><path d="M15 15l6 6m0-6l-6 6"/></svg>
+                </button>
+              </form>
+              {% endif %}
+
+              {% if can_bans and banned_players is not none %}
+              {% if is_banned %}
+              <form method="post" action="/actions/pardon" class="scope-ban js-player-dialog"
+                    data-dialog="confirm" data-player="{{ p.player }}" data-title="Lever le bannissement de {{ p.player }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="redirect_to" value="/players">
+                <input type="hidden" name="player" value="{{ p.player }}">
+                <button type="button" class="ract" title="Lever le bannissement"
+                        aria-label="Lever le bannissement de {{ p.player }}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M7 11V7a5 5 0 019.9-1"/></svg>
+                </button>
+              </form>
+              {% else %}
+              <form method="post" action="/actions/ban" class="scope-all scope-online scope-ban js-player-dialog"
+                    data-dialog="ban" data-player="{{ p.player }}" data-title="Bannir {{ p.player }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="redirect_to" value="/players">
+                <input type="hidden" name="player" value="{{ p.player }}">
+                <input type="hidden" name="reason" value="">
+                <input type="hidden" name="hours" value="">
+                <button type="button" class="ract danger" title="Bannir {{ p.player }}" aria-label="Bannir {{ p.player }}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>
+                </button>
+              </form>
+              {% endif %}
+              {% endif %}
+
+              {% if can_whitelist or can_op or can_bans %}
+              <div class="more-actions scope-all scope-online">
+                <button type="button" class="ract js-more" title="Plus d'actions"
+                        aria-label="Plus d'actions pour {{ p.player }}"
+                        aria-haspopup="menu" aria-expanded="false">
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                </button>
+                <div class="more-menu" role="menu" hidden>
+                  {% if can_whitelist %}<button type="button" role="menuitem" data-go-filter="wl">Voir Whitelist</button>{% endif %}
+                  {% if can_op %}<button type="button" role="menuitem" data-go-filter="op">Voir Opérateurs</button>{% endif %}
+                  {% if can_bans %}<button type="button" role="menuitem" data-go-filter="ban">Voir Bannis</button>{% endif %}
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if can_whitelist %}
+  <form method="post" action="/actions/whitelist/add" class="inline addform wl-addform" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="redirect_to" value="/players">
+    <input name="player" list="knownNotWhitelisted" placeholder="Pseudo à whitelister" required
+           pattern="[A-Za-z0-9_]{3,16}" title="3 à 16 caractères : lettres, chiffres, _">
+    <datalist id="knownNotWhitelisted">
+      {% for p in players %}
+        {% if p.player|lower not in whitelist_keys %}
+        <option value="{{ p.player }}"></option>
+        {% endif %}
+      {% endfor %}
+    </datalist>
+    <button class="small">Ajouter à la whitelist</button>
+  </form>
+  {% endif %}
+  {% if can_bans %}
+  <form method="post" action="/actions/ban" class="inline addform ban-addform js-player-dialog" data-dialog="ban" data-title="Bannir préventivement" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="redirect_to" value="/players">
+    <input type="hidden" name="reason" value="">
+    <input type="hidden" name="hours" value="">
+    <input name="player" list="knownNotBanned" placeholder="Pseudo à bannir" required
+           pattern="[A-Za-z0-9_]{3,16}" title="3 à 16 caractères : lettres, chiffres, _">
+    <datalist id="knownNotBanned">
+      {% for p in players %}
+        {% if p.player|lower not in banned_keys %}
+        <option value="{{ p.player }}"></option>
+        {% endif %}
+      {% endfor %}
+    </datalist>
+    <button class="danger">Bannir le joueur</button>
+  </form>
+  {% endif %}
+  {% if can_op and ops_by_name is not none %}
+  <form method="post" action="/actions/op/add" class="inline addform op-addform js-player-dialog" data-dialog="confirm" data-title="Ajouter un opérateur" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="redirect_to" value="/players">
+    <input name="player" list="knownNotOp" placeholder="Pseudo à passer OP" required
+           pattern="[A-Za-z0-9_]{3,16}" title="3 à 16 caractères : lettres, chiffres, _">
+    <datalist id="knownNotOp">
+      {% for p in players %}
+        {% if p.player|lower not in ops_by_key %}
+        <option value="{{ p.player }}"></option>
+        {% endif %}
+      {% endfor %}
+    </datalist>
+    <select name="level" class="mini-select" title="Niveau OP">
+      {% for lvl, label in op_levels %}
+      <option value="{{ lvl }}" {% if lvl == 4 %}selected{% endif %}>OP {{ lvl }}</option>
+      {% endfor %}
+    </select>
+    <button class="warn">Passer opérateur</button>
+  </form>
+  {% endif %}
+  {% else %}
+  <p class="muted">Aucune session enregistrée pour le moment (l'historique ne
+    couvre que les connexions survenues depuis le démarrage de mc-admin).</p>
+  {% endif %}
+</section>
+
+<dialog class="player-drawer" id="playerDrawer" aria-labelledby="playerDrawerTitle">
+  <div class="player-drawer-frame">
+    <div class="player-drawer-topbar">
+      <span id="playerDrawerTitle">Détail du joueur</span>
+      <button type="button" class="ract" id="playerDrawerClose" aria-label="Fermer le détail du joueur">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="player-drawer-body" id="playerDrawerBody">
+      <p class="muted player-drawer-loading" role="status">Chargement du joueur…</p>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="player-dialog" id="playerActionDialog"
+        aria-labelledby="playerDialogTitle" aria-describedby="playerDialogText">
+  <form method="dialog" class="player-dialog-box">
+    <h2 id="playerDialogTitle">Confirmer</h2>
+    <p class="muted" id="playerDialogText"></p>
+    <label class="dialog-reason">
+      Motif
+      <input id="playerDialogReason" autocomplete="off" placeholder="optionnel">
+    </label>
+    <label class="dialog-hours">
+      Durée du ban
+      <input id="playerDialogHours" type="number" min="0" step="0.5" placeholder="heures, vide = permanent">
+    </label>
+    <div class="dialog-actions">
+      <button type="button" class="txtbtn" id="playerDialogCancel">Annuler</button>
+      <button type="button" class="danger" id="playerDialogConfirm">Confirmer</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  var bar = document.getElementById("playerFilters");
+  if (!bar) return;
+  var rows = Array.prototype.slice.call(document.querySelectorAll("tr[data-online]"));
+  rows.forEach(function (r, i) { r.dataset.idx = i; });  // ordre serveur, pour « par défaut »
+  var whitelistForm = document.querySelector(".wl-addform");
+  var banForm = document.querySelector(".ban-addform");
+  var opForm = document.querySelector(".op-addform");
+  var searchInput = document.getElementById("playerSearch");
+  var sortSelect = document.getElementById("playerSort");
+  var activeFilter = "all";
+  var searchTerm = "";
+
+  function each(selector, fn) {
+    Array.prototype.forEach.call(document.querySelectorAll(selector), fn);
+  }
+
+  function setHidden(el, hidden) {
+    if (!el) return;
+    if (hidden) el.setAttribute("hidden", "");
+    else el.removeAttribute("hidden");
+  }
+
+  function syncAddForms(filter) {
+    setHidden(whitelistForm, filter !== "wl");
+    setHidden(banForm, filter !== "ban");
+    setHidden(opForm, filter !== "op");
+  }
+
+  function syncActionScopes(filter) {
+    each(".rowacts > form, .rowacts > .more-actions", function (el) {
+      var visible = el.classList.contains("scope-" + filter);
+      setHidden(el, !visible);
+    });
+  }
+
+  function applyView() {
+    Array.prototype.forEach.call(bar.querySelectorAll("button"), function (b) {
+      var selected = b.getAttribute("data-filter") === activeFilter;
+      b.classList.toggle("on", selected);
+      b.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    syncAddForms(activeFilter);
+    syncActionScopes(activeFilter);
+    var visible = 0;
+    rows.forEach(function (r) {
+      var show = activeFilter === "all" || r.getAttribute("data-" + activeFilter) === "1";
+      if (show && searchTerm) {
+        show = r.getAttribute("data-player").toLowerCase().indexOf(searchTerm) !== -1;
+      }
+      r.style.display = show ? "" : "none";
+      if (show) visible += 1;
+    });
+    // Vue vide : plus d'en-têtes orphelins au-dessus du formulaire (retour
+    // Jeremy 18/07) — on masque le tableau et on l'annonce clairement.
+    setHidden(document.querySelector(".players-card .table-wrap"), visible === 0);
+    setHidden(document.getElementById("playersEmpty"), visible !== 0);
+  }
+
+  function sortRows(mode) {
+    var num = function (r, key) { return parseInt(r.getAttribute("data-" + key), 10) || 0; };
+    var cmp = {
+      "default": function (a, b) { return num(a, "idx") - num(b, "idx"); },
+      online: function (a, b) { return num(b, "online") - num(a, "online") || num(b, "last") - num(a, "last"); },
+      lastseen: function (a, b) { return num(b, "last") - num(a, "last"); },
+      playtime: function (a, b) { return num(b, "time") - num(a, "time"); },
+      name: function (a, b) { return a.getAttribute("data-player").localeCompare(b.getAttribute("data-player"), "fr", { sensitivity: "base" }); }
+    }[mode];
+    if (!cmp || !rows.length) return;
+    var tbody = rows[0].parentElement;
+    rows.slice().sort(cmp).forEach(function (r) { tbody.appendChild(r); });
+  }
+
+  applyView();
+
+  bar.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-filter]");
+    if (!btn) return;
+    activeFilter = btn.getAttribute("data-filter");
+    applyView();
+  });
+
+  if (searchInput) searchInput.addEventListener("input", function () {
+    searchTerm = searchInput.value.trim().toLowerCase();
+    applyView();
+  });
+
+  if (sortSelect) sortSelect.addEventListener("change", function () {
+    sortRows(sortSelect.value);
+  });
+
+  document.addEventListener("click", function (e) {
+    var more = e.target.closest(".js-more");
+    if (more) {
+      var menu = more.parentElement.querySelector(".more-menu");
+      each(".more-menu", function (m) {
+        if (m !== menu) {
+          m.setAttribute("hidden", "");
+          var otherButton = m.parentElement.querySelector(".js-more");
+          if (otherButton) otherButton.setAttribute("aria-expanded", "false");
+        }
+      });
+      var willOpen = menu.hasAttribute("hidden");
+      setHidden(menu, !willOpen);
+      more.setAttribute("aria-expanded", willOpen ? "true" : "false");
+      if (willOpen) {
+        var firstItem = menu.querySelector('[role="menuitem"]');
+        if (firstItem) firstItem.focus();
+      }
+      e.stopPropagation();
+      return;
+    }
+
+    var go = e.target.closest("[data-go-filter]");
+    if (go) {
+      setFilter(go.getAttribute("data-go-filter"));
+      each(".more-menu", function (m) { m.setAttribute("hidden", ""); });
+      each(".js-more", function (button) { button.setAttribute("aria-expanded", "false"); });
+      if (go.getAttribute("data-go-filter") === "wl" && whitelistForm) {
+        var input = whitelistForm.querySelector("input[name='player']");
+        if (input) input.focus();
+      }
+      return;
+    }
+
+    if (!e.target.closest(".more-actions")) {
+      each(".more-menu", function (m) { m.setAttribute("hidden", ""); });
+      each(".js-more", function (button) { button.setAttribute("aria-expanded", "false"); });
+    }
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    var openMenu = document.querySelector(".more-menu:not([hidden])");
+    if (!openMenu) return;
+    e.preventDefault();
+    openMenu.setAttribute("hidden", "");
+    var trigger = openMenu.parentElement.querySelector(".js-more");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+      trigger.focus();
+    }
+  });
+
+  var drawer = document.getElementById("playerDrawer");
+  var drawerBody = document.getElementById("playerDrawerBody");
+  var drawerTitle = document.getElementById("playerDrawerTitle");
+  var drawerClose = document.getElementById("playerDrawerClose");
+  var drawerOpener = null;
+  var drawerRequest = null;
+  var drawerUrl = "";
+  var drawerPlayer = "";
+
+  function setDrawerLoading() {
+    drawerBody.innerHTML = '<p class="muted player-drawer-loading" role="status">Chargement du joueur…</p>';
+  }
+
+  function setDrawerError() {
+    drawerBody.innerHTML = "";
+    var state = document.createElement("div");
+    state.className = "player-drawer-error";
+    state.setAttribute("role", "alert");
+    var message = document.createElement("p");
+    message.textContent = "Impossible de charger cette fiche pour le moment.";
+    var retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "small";
+    retry.textContent = "Réessayer";
+    retry.addEventListener("click", loadDrawer);
+    state.appendChild(message);
+    state.appendChild(retry);
+    drawerBody.appendChild(state);
+  }
+
+  function loadDrawer() {
+    if (!drawerUrl) return;
+    if (drawerRequest) drawerRequest.abort();
+    drawerRequest = typeof AbortController === "undefined" ? null : new AbortController();
+    setDrawerLoading();
+    fetch(drawerUrl, {
+      credentials: "same-origin",
+      signal: drawerRequest ? drawerRequest.signal : undefined
+    }).then(function (response) {
+      if (response.redirected && new URL(response.url).pathname === "/login") {
+        window.location.assign("/login");
+        return null;
+      }
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return response.text();
+    }).then(function (html) {
+      if (html === null || !drawer.open) return;
+      drawerBody.innerHTML = html;
+      drawerTitle.textContent = "Détail de " + drawerPlayer;
+      if (window.mc.reportNetwork) window.mc.reportNetwork("player-panel", true);
+    }).catch(function (error) {
+      if (error && error.name === "AbortError") return;
+      if (!drawer.open) return;
+      setDrawerError();
+      if (window.mc.reportNetwork) window.mc.reportNetwork("player-panel", false);
+    });
+  }
+
+  document.addEventListener("click", function (e) {
+    var link = e.target.closest(".pname-link[data-player-panel-url]");
+    if (!link || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    drawerOpener = link;
+    drawerUrl = link.getAttribute("data-player-panel-url");
+    drawerPlayer = link.getAttribute("data-player-name") || link.textContent.trim();
+    drawerTitle.textContent = "Détail de " + drawerPlayer;
+    if (!drawer.open) {
+      if (drawer.showModal) drawer.showModal();
+      else drawer.setAttribute("open", "");
+    }
+    drawerClose.focus();
+    loadDrawer();
+  });
+
+  drawerClose.addEventListener("click", function () {
+    if (drawer.close) drawer.close();
+    else drawer.removeAttribute("open");
+  });
+
+  drawer.addEventListener("close", function () {
+    if (drawerRequest) drawerRequest.abort();
+    drawerRequest = null;
+    drawerUrl = "";
+    drawerPlayer = "";
+    drawerTitle.textContent = "Détail du joueur";
+    setDrawerLoading();
+    if (drawerOpener && drawerOpener.isConnected) drawerOpener.focus();
+    drawerOpener = null;
+  });
+
+  var dialog = document.getElementById("playerActionDialog");
+  var pendingForm = null;
+  var dialogOpener = null;
+  if (dialog) {
+    var title = document.getElementById("playerDialogTitle");
+    var text = document.getElementById("playerDialogText");
+    var reasonWrap = dialog.querySelector(".dialog-reason");
+    var hoursWrap = dialog.querySelector(".dialog-hours");
+    var reason = document.getElementById("playerDialogReason");
+    var hours = document.getElementById("playerDialogHours");
+    var cancel = document.getElementById("playerDialogCancel");
+    var confirm = document.getElementById("playerDialogConfirm");
+
+    function openPlayerDialog(form) {
+      pendingForm = form;
+      dialogOpener = document.activeElement;
+      var type = form.getAttribute("data-dialog");
+      title.textContent = form.getAttribute("data-title") || "Confirmer";
+      text.textContent = type === "ban"
+        ? "Le joueur ne pourra plus rejoindre le serveur tant que le ban est actif."
+        : type === "kick"
+          ? "Le joueur sera déconnecté immédiatement."
+          : "Cette action modifie l'état du joueur.";
+      reason.value = "";
+      hours.value = "";
+      setHidden(reasonWrap, type !== "kick" && type !== "ban");
+      setHidden(hoursWrap, type !== "ban");
+      confirm.textContent = type === "ban" ? "Bannir" : type === "kick" ? "Kick" : "Confirmer";
+      try {
+        if (dialog.showModal) dialog.showModal();
+        else dialog.setAttribute("open", "");
+      } catch (err) {
+        dialog.setAttribute("open", "");
+      }
+    }
+
+    function closePlayerDialog() {
+      if (dialog.close) dialog.close();
+      else dialog.removeAttribute("open");
+      pendingForm = null;
+    }
+
+    document.addEventListener("submit", function (e) {
+      var form = e.target.closest ? e.target.closest("form.js-player-dialog") : null;
+      if (form && pendingForm !== form) {
+        e.preventDefault();
+        openPlayerDialog(form);
+      }
+    });
+
+    document.addEventListener("click", function (e) {
+      var button = e.target.closest("form.js-player-dialog button");
+      if (!button) return;
+      e.preventDefault();
+      openPlayerDialog(button.closest("form"));
+    });
+
+    cancel.addEventListener("click", closePlayerDialog);
+    confirm.addEventListener("click", function () {
+      if (!pendingForm) return;
+      var reasonInput = pendingForm.querySelector("input[name='reason']");
+      var hoursInput = pendingForm.querySelector("input[name='hours']");
+      if (reasonInput) reasonInput.value = reason.value;
+      if (hoursInput) hoursInput.value = hours.value;
+      var form = pendingForm;
+      pendingForm = null;
+      if (dialog.close) dialog.close();
+      else dialog.removeAttribute("open");
+      window.mc.submitForm(form);
+    });
+    dialog.addEventListener("close", function () {
+      pendingForm = null;
+      if (dialogOpener && dialogOpener.isConnected) dialogOpener.focus();
+      dialogOpener = null;
+    });
+  }
+})();
+</script>
+{% endblock %}

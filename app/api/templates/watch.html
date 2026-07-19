@@ -1,0 +1,69 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Surveillance</h1>
+
+<section class="card">
+  <h2>Conteneurs surveillés</h2>
+  <p class="muted rules-hint">Le serveur est toujours surveillé ; ajoute ici
+    ses compagnons (tunnel, proxy…). En cas de panne prolongée (3 sondes de
+    30 s), une notification part sur les canaux configurés — et le
+    rétablissement est signalé aussi.</p>
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Conteneurs surveillés et état actuel</caption>
+      <thead><tr><th>Conteneur</th><th>État</th><th></th></tr></thead>
+      <tbody>
+        {% if server_state %}
+        <tr>
+          <td><b>{{ server_state.name }}</b> <span class="chip manual">serveur</span></td>
+          <td><span class="pill {{ 'ok' if server_state.running else 'bad' }} pill-sm"><span class="led"></span>{{ server_state.status }}</span></td>
+          <td class="muted">toujours surveillé</td>
+        </tr>
+        {% endif %}
+        {% for name, state in watched %}
+        <tr>
+          <td><b>{{ name }}</b></td>
+          <td>
+            {% if state %}
+            <span class="pill {{ 'ok' if state.running else 'bad' }} pill-sm"><span class="led"></span>{{ state.status }}</span>
+            {% else %}<span class="muted">?</span>{% endif %}
+          </td>
+          <td class="backup-acts">
+            <form method="post" action="/actions/watch/remove">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="name" value="{{ name }}">
+              <button class="txtbtn danger-link">Ne plus surveiller</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not watched %}
+        <tr><td colspan="3" class="muted">Aucun compagnon surveillé pour le moment.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Surveiller un conteneur</h2>
+  {% if candidates %}
+  <form method="post" action="/actions/watch/add" class="inline sched-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Conteneur
+      <select name="name">
+        {% for c in candidates %}
+        <option value="{{ c.name }}">{{ c.name }} — {{ c.state }}{% if c.image %} ({{ c.image.split(":")[0] }}){% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="small">Surveiller</button>
+  </form>
+  <p class="muted rules-hint">La liste vient de l'hôte Docker (même accès en
+    lecture que la détection de serveurs). Prise en compte à la sonde
+    suivante, sans redémarrage.</p>
+  {% else %}
+  <p class="muted">Aucun autre conteneur détecté sur l'hôte.</p>
+  {% endif %}
+</section>
+{% endblock %}

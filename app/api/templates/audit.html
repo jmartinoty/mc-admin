@@ -1,0 +1,218 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Journal</h1>
+
+<div class="archive-filter-tabs family-tabs">
+  {% for key, label in family_labels.items() %}
+  {% if key == "all" or family_counts.get(key, 0) > 0 %}
+  <a class="tab-link {{ 'on' if (f_family or 'all') == key }}"
+     href="/audit?{{ family_qs }}{% if family_qs %}&{% endif %}{% if key != 'all' %}family={{ key }}{% endif %}"
+     {% if (f_family or 'all') == key %}aria-current="page"{% endif %}>
+    {{ label }} · {{ family_counts.get(key, 0) }}
+  </a>
+  {% endif %}
+  {% endfor %}
+</div>
+<form method="get" action="/audit" class="audit-filters" id="auditFilters">
+  <select name="user" aria-label="Filtrer par utilisateur">
+    <option value="">— utilisateur —</option>
+    {% for u in audit_users %}<option value="{{ u }}" {% if u == f_user %}selected{% endif %}>{{ names.get(u, u) }}{% if u in system_users or u == "scheduler" %} · auto{% endif %}</option>{% endfor %}
+  </select>
+  <select name="action" aria-label="Filtrer par action">
+    <option value="">— action —</option>
+    {% for a in audit_actions %}<option value="{{ a }}" {% if a == f_action %}selected{% endif %}>{{ action_label(a) }}</option>{% endfor %}
+  </select>
+  <select name="outcome" aria-label="Filtrer par résultat">
+    <option value="">— résultat —</option>
+    {% for o, label in (("allowed", "fait"), ("denied", "refusé"), ("error", "échec")) %}
+    <option value="{{ o }}" {% if o == f_outcome %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="period" aria-label="Filtrer par période">
+    <option value="">— depuis toujours —</option>
+    {% for value, label in (("24h", "dernières 24 h"), ("7d", "7 derniers jours"), ("30d", "30 derniers jours")) %}
+    <option value="{{ value }}" {% if value == f_period %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <input name="q" value="{{ f_q }}" placeholder="texte dans le détail…"
+         aria-label="Rechercher dans les détails" autocomplete="off">
+  <button id="auditFilterBtn">Filtrer</button>
+  {% if filtered %}<a class="txtbtn reset-link" href="/audit">réinitialiser</a>{% endif %}
+</form>
+
+<section class="card">
+  {% if summary and (summary.errors or summary.denied) %}
+  <p class="muted audit-summary">
+    {{ summary.total }} entrée(s) sur la période ·
+    <a class="sum-ko" href="/audit?{{ family_qs }}{% if family_qs %}&{% endif %}outcome=error">{{ summary.errors }} échec(s)</a> ·
+    <a class="sum-ko" href="/audit?{{ family_qs }}{% if family_qs %}&{% endif %}outcome=denied">{{ summary.denied }} refus</a>
+  </p>
+  {% endif %}
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="audit audit-ops">
+      <caption class="sr-only">Événements du journal d’administration</caption>
+      <thead>
+        <tr><th>Quand</th><th>Qui</th><th>Opération</th><th class="col-status">Statut</th></tr>
+      </thead>
+      <tbody>
+        {% set state = namespace(day=None) %}
+        {% for row in rows %}
+        {% set day = day_label(row.ts) %}
+        {% if day != state.day %}
+        {% set state.day = day %}
+        <tr class="day-sep"><td colspan="4">{{ day }}</td></tr>
+        {% endif %}
+        {% if row.type == "game" %}
+        <tr class="op-row game-row">
+          <td class="muted tnum">{{ row.ts.astimezone().strftime("%H:%M:%S") }}</td>
+          <td>{{ row.username }}</td>
+          <td>
+            <span class="chip fam-ingame">En jeu</span>
+            <span class="op-line">{{ row.line }}</span>
+          </td>
+          <td class="col-status muted">—</td>
+        </tr>
+        {% elif row.type == "group" %}
+        <tr class="op-row has-more">
+          <td class="muted tnum">{{ row.ts.astimezone().strftime("%H:%M:%S") }}</td>
+          <td>{{ names.get(row.username, row.username) }}</td>
+          <td>
+            <span class="chip fam-{{ row.family }}">{{ family_labels.get(row.family, row.family) }}</span>
+            <span class="op-line">{{ row.title }}</span>
+            {% if row.archive %}<span class="muted op-extra">· {{ row.archive }}</span>{% endif %}
+            {% if row.failed_step %}<span class="op-extra failed-step">— {{ row.failed_step }}</span>{% endif %}
+          </td>
+          <td class="col-status">
+            <span class="pill {{ 'ok' if row.status_kind == 'ok' else 'bad' if row.status_kind == 'ko' else 'neutral' }} pill-sm"><span class="led"></span>{{ row.status_label }}</span>
+            <button type="button" class="chev-toggle"
+                    aria-label="Afficher les étapes de cette opération"
+                    aria-expanded="false" aria-controls="audit-detail-{{ loop.index }}">
+              <span aria-hidden="true">▸</span>
+            </button>
+          </td>
+        </tr>
+        <tr class="op-detail" id="audit-detail-{{ loop.index }}" hidden>
+          <td colspan="4">
+            <ol class="timeline op-steps">
+              {% for ev in row.events %}
+              <li class="tl-item">
+                <span class="tl-dot audit {{ ev.outcome }}"></span>
+                <div class="tl-body">
+                  <div class="tl-head">
+                    <span class="tl-time tnum muted">{{ ev.ts.astimezone().strftime("%H:%M:%S") }}</span>
+                    <span class="tl-title">{{ ev.label }}{% if ev.extra %} <span class="muted">({{ ev.extra }})</span>{% endif %}</span>
+                    {% if ev.outcome == "error" %}<span class="badge ko">échec</span>{% endif %}
+                  </div>
+                </div>
+              </li>
+              {% endfor %}
+            </ol>
+          </td>
+        </tr>
+        {% else %}
+        {% set e = row.e %}
+        <tr class="op-row {{ 'has-more' if row.raw }}">
+          <td class="muted tnum">{{ e.timestamp.astimezone().strftime("%H:%M:%S") }}</td>
+          <td>{{ names.get(e.username, e.username) }}
+            {% if e.username in system_users %}<span class="chip auto-chip">auto</span>{% endif %}</td>
+          <td>
+            <span class="chip fam-{{ entry_family(e) }}" title="{{ e.action }}">{{ action_label(e.action) }}</span>
+            {% if row.line %}<span class="op-line">{{ row.line }}</span>{% endif %}
+          </td>
+          <td class="col-status">
+            <span class="pill {{ 'ok' if row.status_kind == 'ok' else 'bad' }} pill-sm"><span class="led"></span>{{ row.status_label }}</span>
+            {% if row.raw %}
+            <button type="button" class="chev-toggle"
+                    aria-label="Afficher le détail technique de cette opération"
+                    aria-expanded="false" aria-controls="audit-detail-{{ loop.index }}">
+              <span aria-hidden="true">▸</span>
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% if row.raw %}
+        <tr class="op-detail" id="audit-detail-{{ loop.index }}" hidden>
+          <td colspan="4">
+            {% set detail = human_detail(row.raw) %}
+            <div class="op-raw muted">
+              rôle : {{ e.role }} · cible : {{ e.target }}
+              {% for label, value in detail["items"] %}
+              · {{ label|lower }} : {{ value }}
+              {% endfor %}
+              <details>
+                <summary>Détail technique</summary>
+                <code>{{ detail["raw"] }}</code>
+              </details>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if total_pages > 1 %}
+  <nav class="pager">
+    {% if page > 1 %}<a href="/audit?{{ filter_qs }}{% if filter_qs %}&{% endif %}page={{ page - 1 }}">← plus récent</a>{% endif %}
+    <span class="muted">page {{ page }}/{{ total_pages }} · {{ total_entries }} opérations</span>
+    {% if page < total_pages %}<a href="/audit?{{ filter_qs }}{% if filter_qs %}&{% endif %}page={{ page + 1 }}">plus ancien →</a>{% endif %}
+  </nav>
+  {% endif %}
+  {% else %}
+  <p class="muted">Aucune entrée{% if filtered %} ne correspond aux filtres{% else %} d'audit pour le moment{% endif %}.</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  // Filtres auto-appliqués : selects au changement, texte après une pause de
+  // frappe. Le bouton « Filtrer » ne sert qu'en secours sans JavaScript.
+  var form = document.getElementById("auditFilters");
+  if (!form) return;
+  var btn = document.getElementById("auditFilterBtn");
+  if (btn) btn.style.display = "none";
+  Array.prototype.forEach.call(form.querySelectorAll("select"), function (sel) {
+    sel.addEventListener("change", function () { window.mc.submitForm(form); });
+  });
+  var q = form.querySelector("input[name='q']");
+  var timer = null;
+  q.addEventListener("input", function () {
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      try { sessionStorage.setItem("audit-refocus", "1"); } catch (e) {}
+      window.mc.submitForm(form);
+    }, 600);
+  });
+  // Reprendre la saisie là où elle en était après le rechargement déclenché
+  // par la frappe (et seulement dans ce cas : pas de vol de focus sinon).
+  try {
+    if (sessionStorage.getItem("audit-refocus")) {
+      sessionStorage.removeItem("audit-refocus");
+      q.focus();
+      q.setSelectionRange(q.value.length, q.value.length);
+    }
+  } catch (e) {}
+})();
+(function () {
+  // Dépliage des lignes : clic sur la ligne -> étapes (opérations) ou détail brut.
+  function toggleDetail(tr) {
+    var detail = tr.nextElementSibling;
+    if (!detail || !detail.classList.contains("op-detail")) return;
+    var open = !detail.hasAttribute("hidden");
+    if (open) detail.setAttribute("hidden", "");
+    else detail.removeAttribute("hidden");
+    tr.classList.toggle("open", !open);
+    var button = tr.querySelector(".chev-toggle");
+    if (button) button.setAttribute("aria-expanded", open ? "false" : "true");
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll(".op-row.has-more"), function (tr) {
+    tr.addEventListener("click", function () { toggleDetail(tr); });
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% if summary or stats %}
+<section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
+  <div class="metrics player-metrics">
+    <div class="metric">
+      {% set total = stats.play_time_seconds if stats else summary.total_seconds %}
+      <div class="metric-value">{{ (total // 3600) | int }}<span class="unit">h {{ "%02d"|format(((total % 3600) // 60) | int) }}</span></div>
+      <div class="metric-label">Temps de jeu{% if stats %} <span class="spark-hint">total serveur</span>{% endif %}</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value">{{ sessions | length }}</div>
+      <div class="metric-label">Sessions récentes</div>
+    </div>
+    <div class="metric">
+      {% set finished = sessions | selectattr("left_at") | list %}
+      <div class="metric-value">
+        {% if finished and summary %}{{ ((summary.total_seconds / sessions|length) // 60) | int }}<span class="unit">min</span>{% else %}–{% endif %}
+      </div>
+      <div class="metric-label">Durée moyenne</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value pd-lastseen">
+        {% if summary %}{{ "maintenant" if summary.online else summary.last_seen.astimezone().strftime("%d/%m %H:%M") }}{% else %}–{% endif %}
+      </div>
+      <div class="metric-label">Dernière connexion</div>
+    </div>
+  </div>
+</section>
+
+{% if stats %}
+<section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
+  <h2>Statistiques {% if not panel_mode %}<span class="bc-sub">comptées par le serveur depuis la création du monde</span>{% endif %}</h2>
+  {% if panel_mode %}<p class="section-hint">Comptées par le serveur depuis la création du monde.</p>{% endif %}
+  <div class="metrics player-stats">
+    <div class="metric"><div class="metric-value">{{ stats.deaths }}</div><div class="metric-label">Morts</div></div>
+    <div class="metric"><div class="metric-value">{{ stats.mob_kills }}</div><div class="metric-label">Créatures tuées</div></div>
+    <div class="metric"><div class="metric-value">{{ stats.player_kills }}</div><div class="metric-label">Joueurs tués</div></div>
+    <div class="metric"><div class="metric-value">{{ (stats.distance_cm / 100000) | round(1) }}<span class="unit">km</span></div><div class="metric-label">Distance parcourue</div></div>
+    <div class="metric"><div class="metric-value">{{ "{:,}".format(stats.jumps).replace(",", " ") }}</div><div class="metric-label">Sauts</div></div>
+    <div class="metric"><div class="metric-value">{{ "{:,}".format(stats.blocks_mined).replace(",", " ") }}</div><div class="metric-label">Blocs minés</div></div>
+    <div class="metric"><div class="metric-value">{{ "{:,}".format(stats.items_crafted).replace(",", " ") }}</div><div class="metric-label">Objets fabriqués</div></div>
+  </div>
+</section>
+{% endif %}
+
+<section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
+  <h2>Sessions</h2>
+  {% if sessions %}
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Sessions récentes de {{ player_name }}</caption>
+      <thead><tr><th>Connexion</th><th>Déconnexion</th><th>Durée</th></tr></thead>
+      <tbody>
+        {% for s in sessions %}
+        <tr>
+          <td class="tnum">{{ s.joined_at.astimezone().strftime("%d/%m/%Y %H:%M") }}</td>
+          <td class="tnum">{% if s.left_at %}{{ s.left_at.astimezone().strftime("%d/%m/%Y %H:%M") }}{% else %}<span class="pill ok pill-sm"><span class="led"></span>en cours</span>{% endif %}</td>
+          <td class="tnum muted">
+            {% if s.left_at %}
+              {% set d = (s.left_at - s.joined_at).total_seconds() %}
+              {{ (d // 3600) | int }} h {{ "%02d"|format(((d % 3600) // 60) | int) }}
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Aucune session enregistrée pour ce joueur.</p>
+  {% endif %}
+</section>
+{% else %}
+<section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
+  <p class="muted">Aucune donnée pour {{ player_name }} : jamais vu sur ce serveur.</p>
+</section>
+{% endif %}

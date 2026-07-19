@@ -1,0 +1,29 @@
+{% extends "shell.html" %}
+{% block page %}
+<p class="crumb"><a href="/players">← Joueurs</a></p>
+<div class="pd-head">
+  <span class="pavatar pd-avatar">
+    <img class="pavatar-img" loading="lazy" alt=""
+         src="https://mc-heads.net/avatar/{{ stats.uuid if stats and stats.uuid else player_name }}/64"
+         onerror="this.remove()">
+    <span aria-hidden="true">{{ player_name[0]|upper }}</span>
+  </span>
+  <h1>{{ player_name }}</h1>
+  <span class="chips">
+    {% if summary %}
+    <span class="pill {{ 'ok' if summary.online else 'neutral' }} pill-sm"><span class="led"></span>{{ "en ligne" if summary.online else "hors ligne" }}</span>
+    {% endif %}
+    {% if op_entry %}<span class="chip op">OP {{ op_entry.level }}</span>{% endif %}
+    {% if pending_op_level %}
+    <span class="chip pending">
+      niveau {{ pending_op_level.level }} {{ "en cours" if pending_op_level.applying else "en attente" }}
+    </span>
+    {% endif %}
+    {% if is_whitelisted %}<span class="chip wl">whitelist</span>{% endif %}
+    {% if is_banned %}<span class="chip ban">banni</span>{% endif %}
+  </span>
+</div>
+
+{% set panel_mode = false %}
+{% include "partials/player_detail_sections.html" %}
+{% endblock %}

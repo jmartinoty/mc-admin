@@ -1,0 +1,65 @@
+{% set activity_result = activity and activity.phase in ("success", "failed") %}
+{% set activity_active = activity and activity.active and not activity_result %}
+<section class="sched-active restore-progress activity-banner
+                {%- if activity_result %} {{ 'activity-success' if activity.phase == 'success' else 'activity-error' }}
+                {%- elif activity_active and activity.kind == 'restore' %} activity-restore
+                {%- elif activity_active and activity.kind == 'restart' %} activity-waiting
+                {%- elif activity_active %} activity-backup{% endif %}
+                {%- if not (activity_active or activity_result) %} is-hidden{% endif %}"
+         id="globalActivity"
+         data-activity-banner
+         data-status-url="/activity-status"
+         data-phase="{{ activity.phase if activity else 'idle' }}"
+         data-kind="{{ activity.kind if activity else 'idle' }}"
+         role="{{ 'alert' if activity and activity.phase == 'failed' else 'status' }}"
+         aria-live="{{ 'assertive' if activity and activity.phase == 'failed' else 'polite' }}"
+         aria-atomic="true">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+  <div class="activity-body">
+    <b id="activityTitle">{{ activity.title if activity else "" }}</b>
+    <span id="activityText">{{ activity.message if activity else "" }}</span>
+    <div class="restore-meter" id="activityMeter"
+         role="progressbar" aria-label="Progression de l'opération"
+         aria-valuemin="0" aria-valuemax="100"
+         {% if activity and activity.progress_percent is not none %}aria-valuenow="{{ activity.progress_percent }}"{% endif %}
+         {% if activity_result %}hidden{% endif %}>
+      <span class="restore-meter-bar">
+        <span id="activityProgressBar"
+              class="{% if activity_active and activity.progress_percent is none %}indeterminate{% endif %}"
+              {% if activity and activity.progress_percent is not none %}style="width: {{ activity.progress_percent }}%"{% endif %}></span>
+      </span>
+      <span class="tnum" id="activityProgressPct">{% if activity_active and activity.progress_percent is not none %}{{ activity.progress_percent }}%{% endif %}</span>
+    </div>
+    <span class="muted activity-hint">
+      <span id="activityHintText">
+        {%- if activity_result and activity.archive -%}
+          {{ activity.archive }}
+        {%- elif activity_active and activity.kind == "restore" -%}
+          {{ activity.filename or "" }} · sauvegardes et restaurations en pause.
+        {%- elif activity_active and activity.archive -%}
+          {{ activity.archive }}
+        {%- endif -%}
+      </span>
+      <a id="activityDetails"
+         href="{{ activity.detail_url if activity and activity.detail_url else '#' }}"
+         {% if not (activity and activity.detail_url) %}hidden{% endif %}>
+        {{ activity.detail_label if activity and activity.detail_label else "" }}
+      </a>
+    </span>
+    <form method="post"
+          action="{{ activity.action_url if activity and activity.action_url else '#' }}"
+          class="activity-action" id="activityAction"
+          {% if not (activity and activity.action_url) %}hidden{% endif %}>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="txtbtn warn" id="activityActionButton">
+        {{ activity.action_label if activity and activity.action_label else "" }}
+      </button>
+    </form>
+  </div>
+  <form method="post" action="/actions/activity-result/dismiss" class="activity-close"
+        id="activityClose" {% if not activity_result %}hidden{% endif %}>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="redirect_to" value="{{ current_path }}">
+    <button type="submit" aria-label="Fermer ce message" title="Fermer">&times;</button>
+  </form>
+</section>

@@ -1,0 +1,69 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Mods</h1>
+
+<section class="card">
+  {% if mods %}
+  <p class="muted storage-line">
+    {{ mods | length }} mod(s) · {{ (mods_total_bytes / 1048576) | round(1) }} Mio
+    {% if mods_checked_at %} · Modrinth vérifié le {{ mods_checked_at.astimezone().strftime("%d/%m à %H:%M") }}{% endif %}
+  </p>
+  <input id="modSearch" class="rule-search" placeholder="filtrer les mods…"
+         aria-label="Filtrer les mods" autocomplete="off">
+  <div class="table-wrap">
+    <table class="audit" id="modsTable">
+      <caption class="sr-only">Mods installés sur le serveur</caption>
+      <thead><tr><th>Mod</th><th>Version</th><th>Modrinth</th><th>Fichier</th><th>Taille</th><th>Ajouté le</th></tr></thead>
+      <tbody>
+        {% for m in mods %}
+        <tr data-mod="{{ (m.name ~ ' ' ~ m.filename ~ ' ' ~ m.description) | lower }}">
+          <td>
+            <b>{{ m.name or m.filename }}</b>
+            {% if not m.enabled %}<span class="chip neutral">désactivé</span>{% endif %}
+            {% if m.description %}<div class="muted mod-desc">{{ m.description }}</div>{% endif %}
+          </td>
+          <td class="tnum">{{ m.version or "?" }}</td>
+          <td>
+            {% set chk = mod_updates.get(m.sha1) %}
+            {% if chk is none %}
+            <span class="muted chip-pending">vérification à venir</span>
+            {% elif not chk.known %}
+            <span class="muted">inconnu de Modrinth</span>
+            {% elif chk.update_available %}
+            <span class="badge ko">màj dispo</span>
+            {% if chk.latest_version %}<span class="muted tnum">→ {{ chk.latest_version }}</span>{% endif %}
+            {% if chk.project_url %}<a href="{{ chk.project_url }}" target="_blank" rel="noopener">Modrinth ↗</a>{% endif %}
+            {% else %}
+            <span class="badge ok">à jour</span>
+            {% if chk.project_url %}<a href="{{ chk.project_url }}" target="_blank" rel="noopener">↗</a>{% endif %}
+            {% endif %}
+          </td>
+          <td class="muted archive-path">{{ m.filename }}</td>
+          <td class="muted tnum">{{ (m.size_bytes / 1048576) | round(1) }} Mio</td>
+          <td class="muted tnum">{{ m.modified_at.astimezone().strftime("%d/%m/%Y") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Aucun mod trouvé (serveur vanilla, ou dossier non configuré).</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  var search = document.getElementById("modSearch");
+  if (!search) return;
+  var rows = document.querySelectorAll("#modsTable tbody tr");
+  search.addEventListener("input", function () {
+    var q = search.value.trim().toLowerCase();
+    Array.prototype.forEach.call(rows, function (r) {
+      r.style.display = !q || r.getAttribute("data-mod").indexOf(q) !== -1 ? "" : "none";
+    });
+  });
+})();
+</script>
+{% endblock %}

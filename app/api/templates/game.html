@@ -1,0 +1,112 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Réglages du jeu</h1>
+
+{% if gamerules is none %}
+<section class="card"><p class="muted">Réglages indisponibles (serveur injoignable).</p></section>
+{% else %}
+<section class="card">
+  <div class="game-grid">
+    <div class="game-group">
+      <span class="k">Difficulté</span>
+      <form method="post" action="/actions/game/difficulty" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <select name="level" aria-label="Difficulté du serveur">
+          {% for lvl, label in (("peaceful", "Paisible"), ("easy", "Facile"), ("normal", "Normale"), ("hard", "Difficile")) %}
+          <option value="{{ lvl }}" {% if difficulty == lvl %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button class="small">OK</button>
+      </form>
+    </div>
+    <div class="game-group">
+      <span class="k">Météo & heure</span>
+      <div class="game-env">
+        {% for kind, label in (("clear", "☀ Beau temps"), ("rain", "🌧 Pluie"), ("thunder", "⛈ Orage")) %}
+        <form method="post" action="/actions/game/weather">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="kind" value="{{ kind }}">
+          <button class="small env-btn">{{ label }}</button>
+        </form>
+        {% endfor %}
+        {% for moment, label in (("day", "🌅 Jour"), ("night", "🌙 Nuit")) %}
+        <form method="post" action="/actions/game/time">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="moment" value="{{ moment }}">
+          <button class="small env-btn">{{ label }}</button>
+        </form>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Règles du monde <span class="bc-sub">({{ gamerules | length }})</span></h2>
+  <p class="muted rules-hint">Effet immédiat sur la partie. En cas de doute sur une règle, ne pas y toucher.</p>
+  <input id="ruleSearch" class="rule-search"
+         placeholder="filtrer les règles (nom ou description)…"
+         aria-label="Filtrer les règles du monde" autocomplete="off">
+  <div class="table-wrap">
+    <table class="audit" id="rulesTable">
+      <caption class="sr-only">Règles du monde et valeurs actuelles</caption>
+      <thead><tr><th>Règle</th><th>Valeur</th></tr></thead>
+      <tbody>
+        {% for name, value in gamerules | dictsort %}
+        {% set help = rule_help.get(name) %}
+        <tr data-rule="{{ name }}" data-help="{{ (help or '') | lower }}">
+          <td class="tnum rule-name">{{ name }}
+            {% if help %}
+            <span class="info-tip" tabindex="0" aria-label="{{ help }}">?<span class="tip-body">{{ help }}</span></span>
+            {% endif %}
+          </td>
+          {% if value in ("true", "false") %}
+          <td>
+            <form method="post" action="/actions/game/gamerule">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="redirect_to" value="/game">
+              <input type="hidden" name="name" value="{{ name }}">
+              <input type="hidden" name="value" value="{{ 'false' if value == 'true' else 'true' }}">
+              <label class="switch" title="{{ 'Désactiver' if value == 'true' else 'Activer' }}">
+                <input type="checkbox" aria-label="{{ 'Désactiver' if value == 'true' else 'Activer' }} la règle {{ name }}"
+                       {% if value == "true" %}checked{% endif %} onchange="window.mc.submitForm(this.form)">
+                <span class="track"><span class="thumb"></span></span>
+              </label>
+            </form>
+          </td>
+          {% else %}
+          <td>
+            <form method="post" action="/actions/game/gamerule" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="redirect_to" value="/game">
+              <input type="hidden" name="name" value="{{ name }}">
+              <input name="value" type="number" class="mini-number" value="{{ value }}">
+              <button class="link">changer</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  var search = document.getElementById("ruleSearch");
+  var rows = document.querySelectorAll("#rulesTable tbody tr");
+  if (!search) return;
+  search.addEventListener("input", function () {
+    var q = search.value.trim().toLowerCase();
+    Array.prototype.forEach.call(rows, function (r) {
+      var haystack = r.getAttribute("data-rule") + " " + (r.getAttribute("data-help") || "");
+      r.style.display = !q || haystack.indexOf(q) !== -1 ? "" : "none";
+    });
+  });
+})();
+</script>
+{% endblock %}

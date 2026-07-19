@@ -1,0 +1,86 @@
+# Stack de monitoring NAS — Prometheus + exporters.
+# Consommée par mc-admin (panneau métriques) et réutilisable pour tout le reste
+# (Grafana, alerting, autres services…). Un dossier par stack (convention AppData).
+#
+# Réseaux :
+#   - monitoring : réseau nommé partagé — mc-admin s'y attache en `external`.
+#   - mc_playit  : réseau de la stack minecraft — mc-monitor y ping le serveur.
+# Exposition : seul Prometheus est mappé sur l'hôte (9090, LAN uniquement).
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    # TOS : AppData est en 770 (+ACL) — l'utilisateur `nobody` de l'image ne peut
+    # pas lire la config bind-mountée. On aligne sur l'admin NAS (uid 0, comme
+    # cAdvisor) ; le conteneur reste non exposé hors LAN.
+    user: "0:0"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d      # borne le disque (~30 j d'historique)
+    ports:
+      - "9090:9090"                            # UI/API Prometheus (LAN)
+    volumes:
+      # Chemin ABSOLU (côté NAS) requis : avec `docker context ssh://`, un chemin
+      # relatif est résolu par le CLIENT (ex. le Mac) et envoyé tel quel au
+      # daemon distant, qui ne le trouve pas sur son propre filesystem.
+      - /Volume1/AppData/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus                  # volume nommé : évite les soucis d'ACL NAS
+    networks:
+      - monitoring
+      - mc_playit                              # pour joindre minecraft:25585 (FabricExporter, TPS/MSPT)
+
+  # CPU/RAM/réseau/IO de TOUS les conteneurs (dont `minecraft`).
+  # ⚠️ Version ÉPINGLÉE : les cAdvisor >= 0.50 ont retiré la factory Docker
+  # (plus de label name="<conteneur>", seulement les cgroups bruts). La 0.49.x
+  # lit /var/run/docker.sock et étiquette les séries par nom de conteneur.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: unless-stopped
+    command:
+      - --docker_only=true                     # ignore les cgroups système (bruit)
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      # Docker root NON standard sur TerraMaster (TOS) :
+      - /Volume1/@apps/DockerEngine/DockerData:/var/lib/docker:ro
+    networks:
+      - monitoring
+    # pas de `ports:` → accessible uniquement par Prometheus sur le réseau interne
+
+  # Métriques système du NAS (CPU, RAM, températures, disques, réseau).
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - monitoring
+
+  # Joueurs en ligne / latence du serveur Minecraft via le protocole de ping.
+  # TPS/MSPT réels : mod FabricExporter côté serveur (s'appuie sur spark, déjà
+  # installé), scrapé directement par Prometheus (job "minecraft_exporter" ci-dessous).
+  mc-monitor:
+    image: itzg/mc-monitor:latest
+    container_name: mc-monitor
+    restart: unless-stopped
+    command: ["export-for-prometheus", "--servers", "minecraft"]
+    networks:
+      - monitoring
+      - mc_playit                              # pour joindre minecraft:25565
+
+volumes:
+  prom-data:
+
+networks:
+  monitoring:
+    name: monitoring                           # nom stable pour l'attache external
+  mc_playit:
+    external: true

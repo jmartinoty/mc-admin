@@ -1,0 +1,120 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Serveurs</h1>
+
+{% for srv in servers %}
+<section class="card">
+  {% set piloted = loop.first and srv.container == active_container %}
+  <div class="pc-head">
+    <h2>{{ srv.name }}</h2>
+    {% if piloted %}
+    <span class="pill ok pill-sm"><span class="led"></span>piloté</span>
+    {% elif loop.first %}
+    <span class="pill neutral pill-sm">prendra effet au redémarrage de mc-admin</span>
+    {% else %}
+    <span class="pill neutral pill-sm">enregistré — multi-serveur à venir</span>
+    {% endif %}
+    <span class="muted">conteneur « {{ srv.container }} » · RCON {{ srv.rcon_host }}:{{ srv.rcon_port }}</span>
+  </div>
+  <form method="post" action="/actions/servers/{{ srv.id }}/address" class="inline addr-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Adresse de connexion <span class="info-tip" tabindex="0" aria-label="L'adresse que les joueurs entrent dans Minecraft (tunnel playit, IP…). Affichée sur le tableau de bord avec un bouton copier.">?<span class="tip-body">L'adresse que les joueurs entrent dans Minecraft (tunnel playit, IP…). Affichée sur le tableau de bord avec un bouton copier.</span></span>
+      <input name="address" value="{{ srv.address }}" placeholder="exemple.playit.gg ou 192.168.1.26:25565" autocomplete="off">
+    </label>
+    <button class="small">Enregistrer</button>
+  </form>
+  <form method="post" action="/actions/servers/{{ srv.id }}/map" class="inline addr-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Carte du monde <span class="info-tip" tabindex="0" aria-label="L'adresse web de la carte (BlueMap, Dynmap…). Ajoute une page « Carte » au menu, visible par tous les comptes.">?<span class="tip-body">L'adresse web de la carte (BlueMap, Dynmap…). Ajoute une page « Carte » au menu, visible par tous les comptes.</span></span>
+      <input name="map_url" value="{{ srv.map_url }}" placeholder="http://192.168.1.26:8100" autocomplete="off">
+    </label>
+    <button class="small">Enregistrer</button>
+  </form>
+  {% if piloted %}
+  <p class="muted storage-line">Branchements : {{ checks_ok }}/{{ checks | length }} opérationnels — testés à l'instant.</p>
+  <ul class="checks">
+    {% for c in checks %}
+    <li class="check {{ 'ok' if c.ok else 'ko' }}">
+      <span class="check-dot" aria-hidden="true">{{ "✓" if c.ok else "✗" }}</span>
+      <b>{{ c.label }}</b>
+      <span class="muted">— {{ c.detail }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% else %}
+<section class="card profile-empty">
+  <p><b>Aucun serveur administré pour le moment.</b></p>
+  <p class="muted">Ajoute ton serveur Minecraft : choisis-le ci-dessous s'il a
+    été détecté, ou renseigne-le à la main.</p>
+</section>
+{% endfor %}
+
+{% if detected %}
+<section class="card">
+  <h2>Détectés <span class="bc-sub">conteneurs qui ressemblent à un serveur Minecraft</span></h2>
+  <ul class="checks">
+    {% for d in detected %}
+    <li class="check {{ 'ok' if d.configured else 'neutral' }}">
+      <span class="check-dot" aria-hidden="true">{{ "✓" if d.configured else "•" }}</span>
+      <b>{{ d.name }}</b>
+      <span class="muted">— {{ d.image or "image masquée par le proxy" }} · {{ d.state }}{% if d.configured %} · déjà administré{% endif %}</span>
+      {% if not d.configured %}
+      <button type="button" class="txtbtn js-detected-add" data-name="{{ d.name }}">Ajouter</button>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Ajouter un serveur <span class="bc-sub">mode Docker — le mode sans Docker arrive en V7</span></h2>
+  <form method="post" action="/actions/servers/add" class="server-add-form" id="serverAddForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="inline sched-form">
+      <label>Nom affiché
+        <input name="name" id="srvName" maxlength="40" required placeholder="ex. Serveur créatif">
+      </label>
+      <label>Conteneur Docker
+        <input name="container" id="srvContainer" required placeholder="ex. minecraft" autocomplete="off">
+      </label>
+    </div>
+    <div class="inline sched-form">
+      <label>Hôte RCON
+        <input name="rcon_host" id="srvRcon" required placeholder="ex. minecraft" autocomplete="off">
+      </label>
+      <label>Port RCON
+        <input name="rcon_port" type="number" min="1" max="65535" value="25575" class="mini-number">
+      </label>
+      <label>Dossier du monde
+        <input name="world_dir" value="world" autocomplete="off">
+      </label>
+    </div>
+    <p class="muted rules-hint">Le mot de passe RCON reste dans la configuration
+      d'environnement — il n'est jamais enregistré ici.</p>
+    <button class="small">Enregistrer</button>
+  </form>
+</section>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  // « Ajouter » sur un conteneur détecté : préremplit le formulaire.
+  var form = document.getElementById("serverAddForm");
+  if (!form) return;
+  Array.prototype.forEach.call(document.querySelectorAll(".js-detected-add"), function (btn) {
+    btn.addEventListener("click", function () {
+      var name = btn.getAttribute("data-name");
+      document.getElementById("srvName").value = name;
+      document.getElementById("srvContainer").value = name;
+      document.getElementById("srvRcon").value = name;
+      form.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById("srvName").focus();
+    });
+  });
+})();
+</script>
+{% endblock %}

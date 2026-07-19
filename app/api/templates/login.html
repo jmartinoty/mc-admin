@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block document_title %}Connexion · mc-admin{% endblock %}
+{% block content %}
+<main id="main-content" tabindex="-1">
+<section class="card login">
+  <div class="login-brand">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="12" fill="#12141a"/><path fill="#2f8f46" d="M10 12h44v14H10z"/><path fill="#7a4f2a" d="M10 26h44v28H10z"/><path fill="#4fb96a" d="M10 12h10v7h8v-7h12v8h7v-8h7v14H10z"/><path fill="#5f3c20" d="M18 34h8v8h-8zm20 0h8v8h-8zm-10 10h8v8h-8z"/><path fill="#e6e8ee" d="M17 24l8 8-8 8-4-4 4-4-4-4zm12 13h18v6H29z"/></svg>
+    <span class="tw"><span class="typed" id="tw">MC<span class="accent">-</span>ADMIN</span><span class="cur" aria-hidden="true">▍</span></span>
+  </div>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/login">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Utilisateur
+      <input name="username" autocomplete="username" required autofocus>
+    </label>
+    <label>Mot de passe
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Se connecter</button>
+  </form>
+</section>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+// Effet machine à écrire sur le titre. Le titre complet est déjà dans le HTML
+// (accessible + sans-JS) ; on le vide puis on le retape lettre par lettre.
+(function () {
+  var el = document.getElementById("tw");
+  if (!el) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  var full = "MC-ADMIN";
+  function render(k) {
+    var s = full.slice(0, k);
+    el.innerHTML = s.replace("-", '<span class="accent">-</span>');
+  }
+  var n = 0;
+  render(0);
+  (function tick() {
+    n++;
+    render(n);
+    if (n < full.length) setTimeout(tick, 120);
+  })();
+})();
+</script>
+{% endblock %}

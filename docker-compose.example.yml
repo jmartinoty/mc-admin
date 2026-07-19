@@ -1,0 +1,239 @@
+# mc-admin — compose d'exemple générique.
+# Copier docker-compose.example.yml -> docker-compose.yml et .env.example -> .env,
+# remplir .env, puis :
+#   docker compose up -d --build
+#   docker compose --profile tools create mc-backup-profile mc-backup-safety mc-updater mc-restore mc-op-levels
+# Premier lancement : ouvrir http://<hôte>:8080 — l'assistant crée le compte
+# administrateur puis propose de brancher le serveur (détection automatique).
+#
+# Prérequis : un serveur Minecraft (image itzg/minecraft-server conseillée)
+# déjà démarré AU MOINS UNE FOIS (ses fichiers ops.json/banned-players.json
+# doivent exister — docker créerait des dossiers vides à leur place sinon),
+# avec RCON activé, joignable sur le réseau ${MC_NETWORK}.
+#
+# Modèle de sécurité (résumé) :
+# - mc-admin ne touche JAMAIS le socket Docker : il passe par mc-socket-proxy
+#   (whitelist minimale : lister/inspecter + start/stop/restart, rien d'autre) ;
+# - les opérations privilégiées (sauvegarde, restauration, mise à jour) sont
+#   des conteneurs one-shot dédiés, inertes au repos, démarrés à la demande ;
+#   mc-admin leur écrit une consigne validée dans ./data, jamais de commande.
+
+services:
+  mc-admin:
+    build: .
+    # Ou, sans cloner le dépôt :
+    # image: ghcr.io/jmartinoty/mc-admin:latest
+    image: ${MC_ADMIN_IMAGE:-mc-admin:latest}
+    container_name: mc-admin
+    restart: unless-stopped
+    depends_on:
+      - mc-socket-proxy
+    ports:
+      - "${MC_ADMIN_PORT:-8080}:8000"
+    environment:
+      TZ: "${TZ:-UTC}"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+      LOGIN_TRUSTED_PROXY_CIDRS: "${LOGIN_TRUSTED_PROXY_CIDRS:-}"
+      RCON_PASSWORD: "${RCON_PASSWORD}"
+      # L'app parle au PROXY, jamais au socket brut :
+      DOCKER_HOST: "tcp://mc-socket-proxy:2375"
+      # Le serveur piloté se choisit dans l'UI (page Serveurs) au premier
+      # lancement — pas besoin de variable MINECRAFT_CONTAINER.
+      MC_PROFILE_BACKUP_CONTAINER: "mc-backup-profile"
+      MC_RESTORE_SAFETY_BACKUP_CONTAINER: "mc-backup-safety"
+      MC_UPDATER_CONTAINER: "mc-updater"
+      MC_RESTORE_CONTAINER: "mc-restore"
+      MC_OP_LEVELS_CONTAINER: "mc-op-levels"
+      PENDING_OP_LEVELS_FILE: "/data/pending_op_levels.json"
+      MC_LOG_FILE: "/logs/latest.log"
+      OPS_FILE: "/ops.json"
+      BANS_FILE: "/banned-players.json"
+      MC_MODS_DIR: "/mc-mods"
+      MC_SPARK_DIR: "/spark"               # profils spark (si le mod est installé)
+      RBAC_CONFIG: "/config/roles.yml"    # facultatif : rôles par défaut sinon
+      PROMETHEUS_URL: "${PROMETHEUS_URL:-}"
+      DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL:-}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      NOTIFY_PLAYER_EVENTS: "${NOTIFY_PLAYER_EVENTS:-false}"
+      HEALTH_ALERTS: "${HEALTH_ALERTS:-false}"
+      HEALTH_EXTRA_CONTAINERS: "${HEALTH_EXTRA_CONTAINERS:-}"
+    volumes:
+      # Fichiers du serveur en lecture seule. Les niveaux OP individuels sont
+      # appliqués hors ligne par le conteneur one-shot dédié.
+      - ${MC_DATA_DIR}/logs:/logs:ro
+      - ${MC_DATA_DIR}/ops.json:/ops.json:ro
+      - ${MC_DATA_DIR}/banned-players.json:/banned-players.json:ro
+      - ${MC_DATA_DIR}/mods:/mc-mods:ro
+      - ${MC_DATA_DIR}/config/spark:/spark:ro
+      # Config (roles.yml/metrics.yml facultatifs) et état de l'app
+      - ./config:/config:ro
+      - ./data:/data
+      # Archives : parent en LECTURE SEULE, écriture UNIQUEMENT là où la
+      # rétention a le droit d'agir (jamais sur les manuelles) :
+      - ${BACKUPS_DIR}:/backups:ro
+      - ${BACKUPS_DIR}/scheduled:/backups/scheduled
+      - ${BACKUPS_DIR}/profiles:/backups/profiles
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - mc_admin_internal
+      - mc_net
+
+  # SEUL conteneur qui touche le socket Docker en permanence — lecture seule,
+  # whitelist minimale, jamais exposé sur l'hôte.
+  mc-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: mc-socket-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: "1"
+      ALLOW_START: "1"
+      ALLOW_STOP: "1"
+      ALLOW_RESTARTS: "1"
+      POST: "1"
+      EXEC: "0"
+      IMAGES: "0"
+      VOLUMES: "0"
+      NETWORKS: "0"
+      INFO: "0"
+      AUTH: "0"
+      SECRETS: "0"
+      SWARM: "0"
+      SERVICES: "0"
+      TASKS: "0"
+      NODES: "0"
+      PLUGINS: "0"
+      SYSTEM: "0"
+      CONFIGS: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - mc_admin_internal
+
+  # Sauvegardes des profils : conteneur GÉNÉRIQUE one-shot. mc-admin écrit la
+  # consigne (destination + contenu) dans ./data/backup-profile.env puis le
+  # démarre via le proxy ; l'entrypoint la source avant chaque passe.
+  # Profil `tools` : PAS démarré par `docker compose up -d` — création une
+  # fois pour toutes avec la commande en tête de fichier.
+  mc-backup-profile:
+    image: itzg/mc-backup:latest
+    container_name: mc-backup-profile
+    restart: "no"
+    profiles: ["tools"]
+    entrypoint: ["/bin/sh", "-c", "set -a; [ -f /bootstrap/backup-profile.env ] && . /bootstrap/backup-profile.env; set +a; exec /usr/bin/backup loop"]
+    environment:
+      BACKUP_INTERVAL: "0"          # one-shot : une passe puis exit
+      INITIAL_DELAY: "0"
+      BACKUP_METHOD: "tar"
+      PRUNE_BACKUPS_DAYS: "0"       # rétention gérée par mc-admin, par profil
+      RCON_HOST: "${MC_CONTAINER:-minecraft}"
+      RCON_PORT: "25575"
+      RCON_PASSWORD: "${RCON_PASSWORD}"
+      TZ: "${TZ:-UTC}"
+    volumes:
+      - ${MC_DATA_DIR}:/data:ro
+      - ${BACKUPS_DIR}:/backups
+      - ./data:/bootstrap:ro
+    networks:
+      - mc_net
+
+  # Filet de sécurité AVANT restauration : dossier dédié, auto-purgé, hors de
+  # portée d'écriture de mc-admin (voulu).
+  mc-backup-safety:
+    image: itzg/mc-backup:latest
+    container_name: mc-backup-safety
+    restart: "no"
+    profiles: ["tools"]
+    environment:
+      BACKUP_INTERVAL: "0"
+      INITIAL_DELAY: "0"
+      BACKUP_METHOD: "tar"
+      BACKUP_NAME: "mc-safety"
+      PRUNE_BACKUPS_DAYS: "14"
+      RCON_HOST: "${MC_CONTAINER:-minecraft}"
+      RCON_PORT: "25575"
+      RCON_PASSWORD: "${RCON_PASSWORD}"
+      TZ: "${TZ:-UTC}"
+    volumes:
+      - ${MC_DATA_DIR}:/data:ro
+      - ${BACKUPS_DIR}/restore-safety:/backups
+    networks:
+      - mc_net
+
+  # Mise à jour contrôlée : `compose pull` + `up -d` du SEUL service Minecraft.
+  # C'est LUI qui porte le socket Docker — inerte au repos, démarré à la
+  # demande par mc-admin via le proxy. Commande FIGÉE (aucun paramètre ne
+  # vient de mc-admin -> pas d'injection).
+  mc-updater:
+    image: docker:27-cli
+    container_name: mc-updater
+    restart: "no"
+    profiles: ["tools"]
+    working_dir: ${MC_COMPOSE_DIR}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - docker compose -p ${MC_COMPOSE_PROJECT:-minecraft} pull ${MC_SERVICE:-minecraft} && docker compose -p ${MC_COMPOSE_PROJECT:-minecraft} up -d ${MC_SERVICE:-minecraft}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Monté au MÊME chemin que sur l'hôte : les bind mounts relatifs (./data)
+      # du compose Minecraft se résolvent identiquement côté daemon.
+      - ${MC_COMPOSE_DIR}:${MC_COMPOSE_DIR}:ro
+
+  # Restauration transactionnelle : mc-admin écrit la cible dans
+  # ./data/restore-target puis démarre ce conteneur via le proxy. Une
+  # sauvegarde de sécurité vérifiée est TOUJOURS faite avant ; le worker garde
+  # aussi un rollback local jusqu'au redémarrage réussi de Minecraft.
+  mc-restore:
+    # Même image que mc-admin : le worker Python inclus applique une
+    # transaction avec staging et rollback, sans téléchargement à l'exécution.
+    image: ${MC_ADMIN_IMAGE:-mc-admin:latest}
+    container_name: mc-restore
+    restart: "no"
+    profiles: ["tools"]
+    entrypoint: ["python", "/app/restore_worker.py"]
+    command: []
+    environment:
+      MC_CONTAINER_NAME: "${MC_CONTAINER:-minecraft}"
+      RESTORE_TARGET_FILE: "/restore/restore-target"
+      BACKUPS_ROOT: "/backups"
+      MC_DATA_ROOT: "/worlddata"
+      MC_STARTUP_TIMEOUT_SECONDS: "${MC_STARTUP_TIMEOUT_SECONDS:-300}"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${BACKUPS_DIR}:/backups:ro
+      - ${MC_DATA_DIR}:/worlddata
+      - ./data:/restore:ro
+
+  # Niveaux OP individuels : ne démarre que lors d'un redémarrage déjà demandé.
+  # L'original est restauré automatiquement si Minecraft ne redevient pas sain.
+  mc-op-levels:
+    image: ${MC_ADMIN_IMAGE:-mc-admin:latest}
+    container_name: mc-op-levels
+    restart: "no"
+    profiles: ["tools"]
+    entrypoint: ["python", "/app/op_levels_worker.py"]
+    command: []
+    environment:
+      MC_CONTAINER_NAME: "${MC_CONTAINER:-minecraft}"
+      MC_DATA_ROOT: "/worlddata"
+      PENDING_OP_LEVELS_FILE: "/state/pending_op_levels.json"
+      MC_STARTUP_TIMEOUT_SECONDS: "${MC_STARTUP_TIMEOUT_SECONDS:-300}"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${MC_DATA_DIR}:/worlddata
+      - ./data:/state
+
+networks:
+  mc_admin_internal:
+    driver: bridge
+  mc_net:
+    external: true
+    name: ${MC_NETWORK}

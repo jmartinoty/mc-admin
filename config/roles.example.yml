@@ -1,0 +1,40 @@
+# Gabarit des RÔLES de mc-admin.
+# Copier en config/roles.yml (gitignoré) et adapter. Chargé au DÉMARRAGE puis
+# gardé en mémoire (pas de relecture par requête → redémarrer après modif).
+# Fichier OPTIONNEL : absent, l'app utilise les rôles par défaut ci-dessous.
+#
+# Les COMPTES ne se définissent plus ici (V6.5) : ils se créent dans l'UI
+# (premier lancement → assistant, ensuite page « Comptes ») et vivent dans
+# /data/users.json + /data/passwords.json. Une section `users:` historique
+# est importée automatiquement une fois, puis ignorée.
+#
+# Un rôle = un simple regroupement de permissions. Aucun nom de rôle n'est codé
+# en dur dans l'application : owner/admin/friend ci-dessous sont de simples
+# exemples, libre à toi d'en ajouter/renommer.
+#
+# Permissions disponibles :
+#   STATUS  LOGS_VIEW  RESTART  START  BACKUP_TRIGGER  BACKUP_DOWNLOAD
+#   BACKUP_RETENTION  AUDIT_VIEW  RCON_RAW  OP_MANAGE  STOP  UPDATE
+#   WHITELIST_MANAGE  KICK  BAN_MANAGE
+# "*" = wildcard = toutes les permissions.
+# NB : START (démarrer un serveur arrêté) est distinct de STOP (owner) — un rôle
+# peut relancer le serveur sans avoir le droit de l'éteindre. Même logique pour
+# KICK (exclusion temporaire, owner+admin) vs BAN_MANAGE (bannissement, owner).
+
+roles:
+  owner:
+    - "*"
+
+  admin:
+    - STATUS
+    - LOGS_VIEW
+    - RESTART
+    - START
+    - BACKUP_TRIGGER
+    - BACKUP_DOWNLOAD
+    - KICK
+
+  viewer:
+    - STATUS
+    - LOGS_VIEW
+

@@ -1,0 +1,66 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Admin</h1>
+<section class="card">
+  <p class="muted">
+    Un opérateur contourne la plupart des protections et peut exécuter toutes
+    les commandes in-game. À réserver aux joueurs de confiance.
+  </p>
+  <details class="help">
+    <summary>Niveaux OP</summary>
+    <ul class="muted">
+      {% for lvl, label in op_levels %}
+      <li>{{ label }}</li>
+      {% endfor %}
+    </ul>
+    <p class="muted">Un changement de niveau attend le prochain redémarrage demandé.</p>
+  </details>
+  {% if ops is none %}
+    <p class="muted">Liste des opérateurs indisponible.</p>
+  {% else %}
+    {% if ops %}
+    <ul class="players">
+      {% for entry in ops %}
+      {% set pending_op = pending_op_levels.get(entry.name|lower) %}
+      <li>
+        {{ entry.name }}
+        {% if pending_op %}
+        <span class="chip pending">
+          niveau {{ pending_op.level }} {{ "en cours" if pending_op.applying else "en attente" }}
+        </span>
+        {% endif %}
+        <form method="post" action="/actions/op/add" class="js-confirm-form inline" data-confirm="Enregistrer ce niveau pour le prochain redémarrage de {{ entry.name }} ?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="player" value="{{ entry.name }}">
+          <select name="level">
+            {% for lvl, label in op_levels %}
+            <option value="{{ lvl }}" {% if (pending_op and lvl == pending_op.level) or (not pending_op and lvl == entry.level) %}selected{% endif %}>{{ lvl }}</option>
+            {% endfor %}
+          </select>
+          <button class="link">changer</button>
+        </form>
+        <form method="post" action="/actions/op/remove" class="js-confirm-form" data-confirm="Retirer les droits opérateur à {{ entry.name }} ?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="player" value="{{ entry.name }}">
+          <button class="link">retirer</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">Aucun opérateur.</p>
+    {% endif %}
+    <form method="post" action="/actions/op/add" class="js-confirm-form inline addform" data-confirm="Accorder les droits opérateur à ce joueur ? Il pourra utiliser toutes les commandes in-game.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input name="player" placeholder="Pseudo Minecraft" required
+             pattern="[A-Za-z0-9_]{3,16}" title="3 à 16 caractères : lettres, chiffres, _">
+      <select name="level">
+        {% for lvl, label in op_levels %}
+        <option value="{{ lvl }}" {% if lvl == 4 %}selected{% endif %}>{{ lvl }}</option>
+        {% endfor %}
+      </select>
+      <button class="small">Ajouter</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

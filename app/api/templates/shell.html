@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="app-shell">
+  <nav class="sidebar" aria-label="Navigation principale">
+    <div class="brand">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="12" fill="#12141a"/><path fill="#2f8f46" d="M10 12h44v14H10z"/><path fill="#7a4f2a" d="M10 26h44v28H10z"/><path fill="#4fb96a" d="M10 12h10v7h8v-7h12v8h7v-8h7v14H10z"/><path fill="#5f3c20" d="M18 34h8v8h-8zm20 0h8v8h-8zm-10 10h8v8h-8z"/><path fill="#e6e8ee" d="M17 24l8 8-8 8-4-4 4-4-4-4zm12 13h18v6H29z"/></svg>
+      <span>mc<span class="sep">-</span>admin</span>
+    </div>
+    <button type="button" class="nav-burger" id="navBurger"
+            aria-expanded="false" aria-label="Ouvrir le menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <a class="navitem {{ 'active' if active == 'status' }}" href="/"{% if active == 'status' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Tableau de bord</a>
+    <a class="navitem {{ 'active' if active == 'performance' }}" href="/performance"{% if active == 'performance' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 17l5-6 4 3 5-8 4 5"/><path d="M3 21h18"/></svg>Performances</a>
+    {% if map_url %}
+    <a class="navitem {{ 'active' if active == 'map' }}" href="/map"{% if active == 'map' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 4l6 2 6-2v14l-6 2-6-2-6 2V6l6-2z"/><path d="M9 4v14M15 6v14"/></svg>Carte</a>
+    {% endif %}
+    {% if can_players %}
+    <a class="navitem {{ 'active' if active == 'players' }}" href="/players"{% if active == 'players' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1"/></svg>Joueurs</a>
+    {% endif %}
+    {% if can_game %}
+    <a class="navitem {{ 'active' if active == 'game' }}" href="/game"{% if active == 'game' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M1 14h6m2-6h6m2 8h6"/></svg>Jeu</a>
+    {% endif %}
+    <a class="navitem {{ 'active' if active == 'mods' }}" href="/mods"{% if active == 'mods' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/><path d="M12 11L4 6.5M12 11l8-4.5M12 11v9"/></svg>Mods</a>
+    {% if can_backups or can_audit or can_servers %}<div class="nav-group-label">Protéger</div>{% endif %}
+    {% if can_backups %}<a class="navitem {{ 'active' if active == 'backups' }}" href="/backups"{% if active == 'backups' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v13m0 0l4-4m-4 4l-4-4"/><path d="M4 17v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>Sauvegardes</a>{% endif %}
+    {% if can_audit %}<a class="navitem {{ 'active' if active == 'audit' }}" href="/audit"{% if active == 'audit' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Journal</a>{% endif %}
+    {% if can_servers %}
+    <a class="navitem {{ 'active' if active == 'notifications' }}" href="/notifications"{% if active == 'notifications' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>Notifications</a>
+    {% endif %}
+    {% if can_servers %}
+    <a class="navitem {{ 'active' if active == 'watch' }}" href="/watch"{% if active == 'watch' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 4a8.5 8.5 0 018.5 8.5c0 1.8-.5 3.4-1.5 4.8L12 12V4z"/><circle cx="12" cy="12.5" r="8.5"/></svg>Surveillance</a>
+    {% endif %}
+    {% if can_servers or can_users %}<div class="nav-group-label">Administrer</div>{% endif %}
+    {% if can_servers %}
+    <a class="navitem {{ 'active' if active == 'servers' }}" href="/servers"{% if active == 'servers' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>Serveurs</a>
+    {% endif %}
+    {% if can_users %}
+    <a class="navitem {{ 'active' if active == 'users' }}" href="/users"{% if active == 'users' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20v-.8A5.7 5.7 0 018.2 13.5h1.6a5.7 5.7 0 015.7 5.7v.8"/><path d="M16 3.7a3.5 3.5 0 010 6.8M21.5 20v-.8a5.7 5.7 0 00-4-5.4"/></svg>Comptes</a>
+    {% endif %}
+    <div class="sidebar-user">
+      <button type="button" class="userbtn" id="userMenuBtn" aria-haspopup="true" aria-expanded="false">
+        <span class="avatar">{{ display_name[0]|upper }}</span>
+        <span class="uinfo">
+          <span class="uname">{{ display_name }}</span>
+          <span class="urole">{{ user.role.name }}</span>
+        </span>
+        <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 15l-6-6-6 6"/></svg>
+      </button>
+      <div class="popover" id="userMenu" hidden>
+        <div class="po-head">
+          <span class="avatar">{{ display_name[0]|upper }}</span>
+          <div><div class="n">{{ display_name }}</div><div class="r">{{ user.username }} · {{ user.role.name }}</div></div>
+        </div>
+        <details class="po-acc">
+          <summary class="po-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 3a2.8 2.8 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+            Changer le pseudo
+          </summary>
+          <form method="post" action="/actions/display-name" class="po-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="redirect_to" value="{{ current_path }}">
+            <div class="po-row">
+              <input name="display_name" value="{{ display_name }}" maxlength="32" placeholder="{{ user.username }}" autocomplete="off">
+              <button class="po-save">OK</button>
+            </div>
+          </form>
+        </details>
+        <details class="po-acc">
+          <summary class="po-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            Changer le mot de passe
+          </summary>
+          <form method="post" action="/actions/password" class="po-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="redirect_to" value="{{ current_path }}">
+            <input class="po-pw" type="password" name="current_password" placeholder="Mot de passe actuel"
+                   autocomplete="current-password" required>
+            <div class="po-row">
+              <input type="password" name="new_password" placeholder="Nouveau (8 car. min)"
+                     autocomplete="new-password" minlength="8" required>
+              <button class="po-save">OK</button>
+            </div>
+          </form>
+        </details>
+        <div class="po-sep"></div>
+        <button type="button" class="po-item" id="themeToggle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3a9 9 0 109 9 7 7 0 01-9-9z"/></svg>
+          Thème : <span id="themeLabel">auto</span>
+        </button>
+        <div class="po-sep"></div>
+        <form method="post" action="/logout">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="po-item danger">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M16 17l5-5-5-5M21 12H9M9 5H6a2 2 0 00-2 2v10a2 2 0 002 2h3"/></svg>
+            Déconnexion
+          </button>
+        </form>
+        <div class="po-sep"></div>
+        <div class="po-version">mc-admin v{{ app_version }}</div>
+      </div>
+    </div>
+  </nav>
+  <main class="page" id="main-content" tabindex="-1">
+    <div class="network-status" id="networkStatus" role="status" aria-live="polite" hidden>
+      Connexion interrompue. Les données affichées sont conservées, nouvel essai en cours.
+    </div>
+    {% if activity_enabled %}{% include "partials/activity_banner.html" %}{% endif %}
+    <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions">
+      {% if flash %}
+      {% if flash is mapping %}
+      <div class="toast {{ 'error' if flash.error else 'ok' }}"
+           role="{{ 'alert' if flash.error else 'status' }}"
+           data-timeout="{{ 20000 if flash.details else 12000 }}">
+        <span>{{ flash.text }}{% if flash.code %} <span class="err-code">{{ flash.code }}</span>{% endif %}</span>
+        {% if flash.details %}
+        <button type="button" class="txtbtn toast-details" id="errorDetailsOpen">Détails</button>
+        {% endif %}
+        <button type="button" class="toast-close" aria-label="Fermer ce message">&times;</button>
+      </div>
+      {% else %}
+      {% set flash_error = flash[:5] == "Échec" %}
+      <div class="toast {{ 'error' if flash_error else 'ok' }}"
+           role="{{ 'alert' if flash_error else 'status' }}"
+           data-timeout="{{ 12000 if flash_error else 8000 }}">
+        <span>{{ flash }}</span>
+        <button type="button" class="toast-close" aria-label="Fermer ce message">&times;</button>
+      </div>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% if flash is mapping and flash.details %}
+    <dialog class="player-dialog" id="errorDetails"
+            aria-labelledby="errorDetailsTitle" aria-describedby="errorDetailsText">
+      <div class="player-dialog-box">
+        <h2 id="errorDetailsTitle">Détails de l'erreur{% if flash.code %} · {{ flash.code }}{% endif %}</h2>
+        <pre class="err-details" id="errorDetailsText">{{ flash.details }}</pre>
+        <div class="dialog-actions">
+          <button type="button" class="txtbtn" id="errorDetailsCopy">Copier</button>
+          <button type="button" id="errorDetailsClose" autofocus>Fermer</button>
+        </div>
+      </div>
+    </dialog>
+    {% endif %}
+    <dialog class="player-dialog" id="appConfirm"
+            aria-labelledby="appConfirmTitle" aria-describedby="appConfirmText">
+      <form method="dialog" class="player-dialog-box">
+        <h2 id="appConfirmTitle">Confirmation</h2>
+        <p class="muted" id="appConfirmText">Confirmer ?</p>
+        <div class="dialog-actions">
+          <button type="button" class="txtbtn" id="appConfirmCancel">Annuler</button>
+          <button type="button" class="danger" id="appConfirmOk">Confirmer</button>
+        </div>
+      </form>
+    </dialog>
+    {% block page %}{% endblock %}
+  </main>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/shell.js?v=20260719-quickwins"></script>
+{% block page_scripts %}{% endblock %}
+{% endblock %}

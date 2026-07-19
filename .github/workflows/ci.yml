@@ -1,0 +1,60 @@
+# CI mc-admin : tests + lint sur chaque push/PR, image publiée sur GHCR
+# pour main (tag `latest`) et pour les tags de version (`vX.Y.Z`).
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      # Deux tests vérifient des heures affichées en clair (séparateurs de
+      # jours du Journal, titres d'archives) : l'app rend l'heure LOCALE,
+      # on fige donc le fuseau du runner comme en prod.
+      TZ: Europe/Paris
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m ruff check app/ tests/
+      - run: python -m pytest --no-cov -o addopts="" -q tests/
+
+  image:
+    # Publication uniquement depuis le dépôt (jamais depuis un fork/PR).
+    if: github.event_name == 'push'
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

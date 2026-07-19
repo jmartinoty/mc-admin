@@ -1,0 +1,25 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Console</h1>
+<section class="card">
+  <p class="muted">
+    Commande RCON arbitraire, sans restriction — équivalent à la console du
+    serveur. Chaque commande est journalisée dans le
+    <a href="/audit">journal d'audit</a>.
+  </p>
+  <form method="post" action="/actions/rcon" class="js-confirm-form" data-confirm="Exécuter cette commande RCON ? Aucune confirmation supplémentaire ne sera demandée.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input name="command" placeholder="ex. say Bonjour, whitelist list, time set day…"
+           required autocomplete="off" autofocus>
+    <p><button class="small danger">Exécuter</button></p>
+  </form>
+  {% if last_command %}
+  <p class="muted">$ {{ last_command }}</p>
+  {% if last_error %}
+    <p class="error">{{ last_error }}</p>
+  {% else %}
+    <pre class="logs">{{ last_output }}</pre>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,59 @@
+# Gabarit du panneau métriques de mc-admin.
+# Fichier OPTIONNEL depuis la V6.5.3 : sans metrics.yml, l'app utilise ses
+# défauts embarqués (joueurs, latence, CPU, RAM, TPS, MSPT — cf.
+# DEFAULT_METRICS dans app/config.py), avec le nom du conteneur du serveur
+# piloté injecté automatiquement.
+#
+# Pour personnaliser : copier en config/metrics.yml et adapter — le fichier
+# REMPLACE alors intégralement les défauts (pas de fusion). Une métrique =
+# key (identifiant), label (affiché), unit, query (PromQL évalué par
+# Prometheus). Les requêtes sont PRÉDÉFINIES ici et chargées au démarrage :
+# l'UI ne peut jamais soumettre de PromQL arbitraire. Redémarrer après modif.
+# Le contenu ci-dessous reproduit les défauts (conteneur « minecraft »).
+
+metrics:
+  - key: players
+    label: "Joueurs en ligne"
+    unit: ""
+    query: 'minecraft_status_players_online_count{server_host="minecraft"}'
+    spark: true   # mini-graphe 24 h sur le dashboard
+
+  - key: latency
+    label: "Latence ping"
+    unit: "ms"
+    query: 'minecraft_status_response_time_seconds{server_host="minecraft"} * 1000'
+
+  - key: cpu
+    label: "CPU conteneur"
+    unit: "%"
+    query: 'rate(container_cpu_usage_seconds_total{name="minecraft"}[2m]) * 100'
+
+  - key: ram
+    label: "RAM conteneur"
+    unit: "Mio"
+    query: 'container_memory_working_set_bytes{name="minecraft"} / 1048576'
+    spark: true   # mini-graphe 24 h sur le dashboard
+
+  # TPS/MSPT réels (V3.5) : mod FabricExporter côté serveur, s'appuie sur spark
+  # (déjà installé). Scrapé par Prometheus sur minecraft:25585, job
+  # "minecraft_exporter" (AppData/monitoring/prometheus/prometheus.yml).
+  - key: tps
+    label: "TPS"
+    unit: ""
+    query: 'minecraft_tps'
+    spark: true   # mini-graphe 24 h sur le dashboard
+
+  - key: mspt
+    label: "MSPT moyen"
+    unit: "ms"
+    query: 'minecraft_mspt{type="mean"}'
+
+  # Exemples d'extensions (dé-commenter au besoin) :
+  # - key: nas_cpu
+  #   label: "CPU NAS"
+  #   unit: "%"
+  #   query: '100 - avg(rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100'
+  # - key: nas_ram
+  #   label: "RAM NAS"
+  #   unit: "%"
+  #   query: '(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100'

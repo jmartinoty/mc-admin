@@ -1,0 +1,230 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Notifications</h1>
+
+{% if channels %}
+<section class="profile-grid">
+  {% for ch in channels %}
+  <div class="card profile-card {{ '' if ch.enabled else 'pc-off' }}">
+    <div class="pc-head">
+      <h2>{{ ch.label }}</h2>
+      <span class="pill {{ 'ok' if ch.enabled else 'neutral' }} pill-sm"><span class="led"></span>{{ "actif" if ch.enabled else "suspendu" }}</span>
+    </div>
+    <p class="pc-meta"><span class="chip manual">{{ ch.type }}</span></p>
+    <div class="game-rules card-events">
+      {% for key, label in event_labels %}
+      <form method="post" action="/actions/notify-channels/{{ ch.id }}/event" class="game-rule">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="event" value="{{ key }}">
+        {% if not ch.events[key] %}<input type="hidden" name="value" value="on">{% endif %}
+        <label class="switch" title="{{ 'Désactiver' if ch.events[key] else 'Activer' }}">
+          <input type="checkbox" {% if ch.events[key] %}checked{% endif %} onchange="window.mc.submitForm(this.form)">
+          <span class="track"><span class="thumb"></span></span>
+        </label>
+        <span class="rule-label">{{ label }}</span>
+      </form>
+      {% endfor %}
+    </div>
+    <p class="muted pc-line">Les échecs d'actions sont toujours envoyés.</p>
+    <div class="pc-actions">
+      <form method="post" action="/actions/notify-channels/{{ ch.id }}/test">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="small">Tester</button>
+      </form>
+      <button type="button" class="txtbtn js-channel-edit"
+              data-id="{{ ch.id }}" data-type="{{ ch.type }}" data-label="{{ ch.label }}"
+              data-webhook="{{ ch.config.webhook_url or '' }}" data-token="{{ ch.config.bot_token or '' }}"
+              data-chat="{{ ch.config.chat_id or '' }}"
+              data-events="{{ ch.events | tojson | e }}">Modifier</button>
+      <form method="post" action="/actions/notify-channels/{{ ch.id }}/toggle">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if ch.enabled %}
+        <button class="txtbtn warn">Suspendre</button>
+        {% else %}
+        <input type="hidden" name="enabled" value="on">
+        <button class="txtbtn">Reprendre</button>
+        {% endif %}
+      </form>
+      <form method="post" action="/actions/notify-channels/{{ ch.id }}/delete" class="js-confirm-form"
+            data-confirm="Supprimer le canal « {{ ch.label }} » ? Plus aucune notification n'y partira.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="button" class="txtbtn danger-link js-confirm-open">Supprimer</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+  <button type="button" class="profile-add" id="channelAdd">
+    <span class="pa-plus">＋</span> Ajouter un canal
+  </button>
+</section>
+{% else %}
+<section class="card">
+  <h2>Aucun canal de notification</h2>
+  <p class="muted">Discord, Telegram… chaque canal a ses propres réglages :
+    tu peux recevoir les connexions des joueurs sur l'un et seulement les
+    pannes sur l'autre.</p>
+  <button type="button" id="channelAdd"><span class="pa-plus">＋</span> Ajouter un canal</button>
+</section>
+{% endif %}
+
+<dialog class="player-dialog" id="channelDialog" aria-labelledby="channelDialogTitle">
+  <form method="post" class="player-dialog-box" id="channelForm" action="/actions/notify-channels">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="type" id="chType" value="discord">
+    <h2 id="channelDialogTitle">Nouveau canal</h2>
+
+    <div id="chStep1">
+      <p class="muted">Où veux-tu recevoir les notifications ?</p>
+      <div class="channel-types">
+        <button type="button" class="channel-type" data-type="discord">
+          <b>Discord</b>
+          <span class="muted">via un webhook de salon</span>
+        </button>
+        <button type="button" class="channel-type" data-type="telegram">
+          <b>Telegram</b>
+          <span class="muted">via un bot + chat ID</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="chStep2" hidden>
+      <label>Nom du canal
+        <input name="label" id="chLabel" maxlength="40" placeholder="Discord copains" autocomplete="off">
+      </label>
+      <div data-fields="discord">
+        <label>URL du webhook
+          <input name="webhook_url" id="chWebhook" placeholder="https://discord.com/api/webhooks/…" autocomplete="off">
+        </label>
+        <p class="muted rules-hint">Discord → Paramètres du salon → Intégrations
+          → Webhooks → Nouveau webhook → Copier l'URL.</p>
+      </div>
+      <div data-fields="telegram" hidden>
+        <label>Jeton du bot
+          <input name="bot_token" id="chToken" placeholder="123456:ABC…" autocomplete="off">
+        </label>
+        <label>Chat ID <span class="muted">(un nombre — pas le @nom du bot)</span>
+          <span class="detect-row">
+            <input name="chat_id" id="chChat" placeholder="123456789 ou -1001234567890" autocomplete="off">
+            <button type="button" class="small" id="chDetect">Détecter mes chats</button>
+          </span>
+        </label>
+        <div id="chDetectOut" class="detect-out" hidden></div>
+        <p class="muted rules-hint">1. Crée le bot via @BotFather (il donne le
+          jeton). 2. <b>Envoie /start à ton bot</b> — sans ça, Telegram lui
+          interdit de t'écrire. 3. Récupère ton chat ID (numérique) via
+          @userinfobot ; pour un groupe, ajoute le bot au groupe (ID négatif).</p>
+      </div>
+      <div class="game-rules">
+        {% for key, label in event_labels %}
+        <label class="game-rule">
+          <span class="switch">
+            <input type="checkbox" name="{{ key }}" value="on" checked>
+            <span class="track"><span class="thumb"></span></span>
+          </span>
+          <span class="rule-label">{{ label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <p class="muted rules-hint">Les échecs d'actions (redémarrage, sauvegarde…)
+        sont toujours notifiés, sur tous les canaux actifs.</p>
+    </div>
+
+    <div class="dialog-actions">
+      <button type="button" class="txtbtn" id="channelCancel">Annuler</button>
+      <button id="channelSubmit" hidden>Créer et tester</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  var dialog = document.getElementById("channelDialog");
+  var form = document.getElementById("channelForm");
+  var step1 = document.getElementById("chStep1");
+  var step2 = document.getElementById("chStep2");
+  var submit = document.getElementById("channelSubmit");
+  var title = document.getElementById("channelDialogTitle");
+
+  function showType(type) {
+    document.getElementById("chType").value = type;
+    Array.prototype.forEach.call(step2.querySelectorAll("[data-fields]"), function (el) {
+      el.hidden = el.getAttribute("data-fields") !== type;
+    });
+    step1.hidden = true;
+    step2.hidden = false;
+    submit.hidden = false;
+  }
+  function openDialog(edit) {
+    form.action = edit ? "/actions/notify-channels/" + edit.id + "/update" : "/actions/notify-channels";
+    title.textContent = edit ? "Modifier « " + edit.label + " »" : "Nouveau canal";
+    submit.textContent = edit ? "Enregistrer" : "Créer et tester";
+    document.getElementById("chLabel").value = edit ? edit.label : "";
+    document.getElementById("chWebhook").value = edit ? edit.webhook : "";
+    document.getElementById("chToken").value = edit ? edit.token : "";
+    document.getElementById("chChat").value = edit ? edit.chat : "";
+    Array.prototype.forEach.call(step2.querySelectorAll(".game-rule input[type=checkbox]"), function (box) {
+      box.checked = edit ? !!edit.events[box.name] : true;
+    });
+    if (edit) { showType(edit.type); }
+    else { step1.hidden = false; step2.hidden = true; submit.hidden = true; }
+    if (dialog.showModal) dialog.showModal();
+  }
+
+  var detect = document.getElementById("chDetect");
+  if (detect) detect.addEventListener("click", function () {
+    var out = document.getElementById("chDetectOut");
+    out.hidden = false;
+    out.textContent = "Interrogation du bot…";
+    var body = new URLSearchParams();
+    body.set("bot_token", document.getElementById("chToken").value);
+    body.set("csrf_token", form.querySelector("[name=csrf_token]").value);
+    fetch("/actions/notify-channels/detect-chats", { method: "POST", body: body })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        out.textContent = "";
+        if (data.error) { out.textContent = data.error; return; }
+        // Plusieurs chats possibles (ton privé, un groupe…) : on les montre
+        // TOUS, un clic remplit le champ.
+        data.chats.forEach(function (chat) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "small detect-chat";
+          btn.textContent = chat.name + " (" + chat.type + ") — " + chat.id;
+          btn.addEventListener("click", function () {
+            document.getElementById("chChat").value = chat.id;
+            out.hidden = true;
+          });
+          out.appendChild(btn);
+        });
+      })
+      .catch(function () { out.textContent = "Échec réseau — réessaie."; });
+  });
+  form.addEventListener("submit", function () {
+    // Anti-double-clic : le test d'envoi peut prendre quelques secondes —
+    // deux clics créaient DEUX canaux (vécu Jeremy 17/07).
+    submit.disabled = true;
+    submit.textContent = "Envoi en cours…";
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".channel-type"), function (btn) {
+    btn.addEventListener("click", function () { showType(btn.getAttribute("data-type")); });
+  });
+  var add = document.getElementById("channelAdd");
+  if (add) add.addEventListener("click", function () { openDialog(null); });
+  Array.prototype.forEach.call(document.querySelectorAll(".js-channel-edit"), function (btn) {
+    btn.addEventListener("click", function () {
+      openDialog({
+        id: btn.getAttribute("data-id"), type: btn.getAttribute("data-type"),
+        label: btn.getAttribute("data-label"), webhook: btn.getAttribute("data-webhook"),
+        token: btn.getAttribute("data-token"), chat: btn.getAttribute("data-chat"),
+        events: JSON.parse(btn.getAttribute("data-events") || "{}"),
+      });
+    });
+  });
+  document.getElementById("channelCancel").addEventListener("click", function () {
+    if (dialog.close) dialog.close();
+  });
+})();
+</script>
+{% endblock %}

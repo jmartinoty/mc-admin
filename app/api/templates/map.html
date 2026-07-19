@@ -1,0 +1,28 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Carte</h1>
+<section class="card map-card">
+  <div class="map-toolbar">
+    <p class="muted">Carte du monde, servie par le serveur de jeu.</p>
+    <a class="btn" href="{{ map_url }}" target="_blank" rel="noopener">Ouvrir dans un onglet</a>
+  </div>
+  <iframe id="mapFrame" class="map-frame" src="{{ map_url }}" title="Carte du monde"
+          loading="lazy" referrerpolicy="no-referrer"></iframe>
+  <p class="muted" id="mapMixedNote" hidden>
+    Le navigateur refuse d'afficher la carte dans cette page : elle est servie
+    en HTTP alors que mc-admin est en HTTPS. Utilise « Ouvrir dans un onglet ».
+  </p>
+</section>
+{% endblock %}
+{% block page_scripts %}
+<script>
+(function () {
+  var frame = document.getElementById("mapFrame");
+  var note = document.getElementById("mapMixedNote");
+  if (window.location.protocol === "https:" && frame.getAttribute("src").indexOf("http://") === 0) {
+    frame.hidden = true;
+    note.hidden = false;
+  }
+})();
+</script>
+{% endblock %}

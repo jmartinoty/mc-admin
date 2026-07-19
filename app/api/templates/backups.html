@@ -1,0 +1,482 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Sauvegardes</h1>
+
+{% if profiles %}
+<section class="profile-grid">
+  {% for pv in profiles %}
+  {% set p = pv.profile %}
+  <div class="card profile-card {% if not p.enabled %}is-suspended{% endif %}">
+    <div class="pc-head">
+      <h2>{{ p.name }}</h2>
+      <span class="pill {{ 'ok' if p.enabled else 'neutral' }} pill-sm"><span class="led"></span>{{ "active" if p.enabled else "suspendue" }}</span>
+    </div>
+    <p class="pc-meta">
+      {% for cat in p.include %}<span class="chip manual">{{ {"all": "tout", "world": "monde", "mods": "mods", "mods_jars": "mods", "config": "configs", "admin": "listes"}.get(cat, cat) }}</span>{% endfor %}
+    </p>
+    <p class="muted pc-line">
+      {% if p.daily_at %}tous les jours à {{ p.daily_at }}{% elif p.hours %}toutes les {{ p.hours | int }} h{% else %}manuel uniquement{% endif %}
+      · {% if p.retention_daily_days %}{{ p.retention_daily_days }} j + {{ p.retention_monthly_months }} mensuelles{% else %}conservées sans limite{% endif %}
+    </p>
+    <p class="muted pc-line">
+      {% if pv.last %}dernière : {{ pv.last.created_at.astimezone().strftime("%d/%m %H:%M") }}{% if pv.last_ok %} <span class="chip verified">✓</span>{% endif %}
+      · {{ pv.count }} archive(s) · {{ (pv.total_bytes / 1073741824) | round(1) }} Go
+      {% else %}aucune archive pour le moment{% endif %}
+    </p>
+    <div class="pc-actions">
+      {% set scheduled = p.daily_at or p.hours %}
+      <form method="post" action="/actions/backup-profiles/{{ p.id }}/run">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if scheduled %}
+        {# profil planifié : il tourne tout seul — le lancement ad hoc reste
+           possible mais discret (utile avant une manip risquée) #}
+        <button class="txtbtn" {% if operation_locked or not p.enabled %}disabled{% endif %}>Lancer maintenant</button>
+        {% else %}
+        <button class="small" {% if operation_locked or not p.enabled %}disabled{% endif %}>Sauvegarder maintenant</button>
+        {% endif %}
+      </form>
+      {% if can_manage %}
+      <button type="button" class="txtbtn js-profile-edit"
+              data-id="{{ p.id }}" data-name="{{ p.name }}"
+              data-include="{{ p.include | join(',') }}"
+              data-hours="{{ p.hours | int }}" data-daily="{{ p.daily_at or '' }}"
+              data-days="{{ p.retention_daily_days }}" data-months="{{ p.retention_monthly_months }}">Modifier</button>
+      <form method="post" action="/actions/backup-profiles/{{ p.id }}/toggle">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="enabled" value="{{ '0' if p.enabled else '1' }}">
+        <button class="txtbtn">{{ "Suspendre" if p.enabled else "Reprendre" }}</button>
+      </form>
+      <form method="post" action="/actions/backup-profiles/{{ p.id }}/delete" class="js-confirm-form"
+            data-confirm="Supprimer la configuration « {{ p.name }} » ? Ses archives existantes sont conservées.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="button" class="txtbtn danger-link js-confirm-open">Supprimer</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% if can_manage %}
+  <button type="button" class="card profile-card profile-add" id="profileAdd">
+    <span class="pa-plus">+</span>
+    <span>Ajouter une configuration de sauvegarde</span>
+  </button>
+  {% endif %}
+</section>
+{% elif can_manage %}
+<section class="card profile-empty">
+  <p><b>Aucune sauvegarde configurée.</b></p>
+  <p class="muted">Protège ton serveur en quelques clics : choisis quoi
+    sauvegarder, à quelle fréquence, et combien de temps conserver.</p>
+  <button type="button" class="danger" id="profileAdd">+ Créer une configuration</button>
+</section>
+{% else %}
+<section class="card"><p class="muted">Aucune sauvegarde configurée.</p></section>
+{% endif %}
+
+{% if can_manage %}
+<dialog class="player-dialog profile-dialog" id="profileDialog"
+        aria-labelledby="profileDialogTitle">
+  <form method="post" action="/actions/backup-profiles" class="player-dialog-box" id="profileForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2 id="profileDialogTitle">Nouvelle configuration</h2>
+    <label>Nom
+      <input name="name" id="profileName" maxlength="40" required placeholder="ex. Serveur complet" autocomplete="off">
+    </label>
+    <fieldset class="profile-fieldset">
+      <legend>1 · Quoi sauvegarder</legend>
+      {% for key, label, hint in profile_categories %}
+      <label class="profile-cat"><input type="checkbox" name="include" value="{{ key }}"
+        {% if key == "all" %}data-exclusive="1"{% endif %}>
+        <span><b>{{ label }}</b> <span class="muted">— {{ hint }}</span></span></label>
+      {% endfor %}
+    </fieldset>
+    <fieldset class="profile-fieldset">
+      <legend>2 · Quand</legend>
+      <div class="inline sched-form">
+        <select name="hours" id="profileHours">
+          <option value="0">manuel uniquement</option>
+          {% for h in (6, 12, 24, 48) %}<option value="{{ h }}">toutes les {{ h }} h</option>{% endfor %}
+          <option value="daily">tous les jours à…</option>
+        </select>
+        <input type="time" name="time_hhmm" id="profileTime" value="04:00" hidden>
+      </div>
+    </fieldset>
+    <fieldset class="profile-fieldset">
+      <legend>3 · Combien de temps conserver</legend>
+      <div class="inline retention-form">
+        <label><input name="retention_daily_days" id="profileDays" type="number" min="0" max="365" value="0" class="mini-number"> jours</label>
+        <label>+ <input name="retention_monthly_months" id="profileMonths" type="number" min="0" max="120" value="0" class="mini-number"> mensuelles</label>
+      </div>
+      <p class="muted rules-hint">0 jour = conserver toutes les archives sans limite.</p>
+    </fieldset>
+    <div class="dialog-actions">
+      <button type="button" class="txtbtn" id="profileCancel">Annuler</button>
+      <button id="profileSubmit">Créer</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+
+<section class="card">
+  <h2>Archives <span class="bc-sub">toutes les sauvegardes existantes</span></h2>
+  <p class="muted storage-line">
+    {{ archive_counts.get("all", 0) }} archive(s) ·
+    {{ (backup_total_bytes / 1073741824) | round(1) }} Go occupés
+    {%- if backup_free_bytes is not none %} · {{ (backup_free_bytes / 1073741824) | round(0) | int }} Go libres sur le volume{% endif %}
+  </p>
+  <div class="archive-filter-tabs">
+    {% for key, label in archive_type_labels.items() %}
+    <a class="tab-link {{ 'on' if archive_filter == key }}"
+       href="/backups?type={{ key }}"
+       {% if archive_filter == key %}aria-current="page"{% endif %}>
+      {{ label }} · {{ archive_counts.get(key, 0) }}
+    </a>
+    {% endfor %}
+  </div>
+  {% if archive_views %}
+  <div class="archive-timeline">
+    {% for group in archive_groups %}
+    <section class="archive-day" data-archive-day="{{ group['date_iso'] }}"
+             aria-labelledby="archive-day-{{ group['date_iso'] }}">
+      <header class="archive-day-head">
+        <h3 id="archive-day-{{ group['date_iso'] }}">{{ group['label'] }}</h3>
+        <span class="muted">
+          {{ group['items']|length }} archive(s) · {{ (group['total_bytes'] / 1073741824) | round(1) }} Go
+        </span>
+      </header>
+      <ol class="archive-day-list">
+        {% for item in group['items'] %}
+        {% set a = item.archive %}
+        <li class="archive-entry archive-entry-{{ item.kind }}">
+          <span class="archive-timeline-dot" aria-hidden="true"></span>
+          <div class="archive-entry-body">
+            <div class="archive-entry-head">
+              <div>
+                <div class="archive-title">{{ item.title }}</div>
+                <div class="muted archive-path">{{ a.filename }}</div>
+              </div>
+              <time class="tnum muted" datetime="{{ a.created_at.isoformat() }}">
+                {{ a.created_at.astimezone().strftime("%H:%M") }}
+              </time>
+            </div>
+            <div class="archive-entry-meta">
+            {% if item.kind == "safety" %}
+            <span class="chip security">sécurité</span>
+            {% elif item.kind == "legacy" %}
+            <span class="chip neutral">historique</span>
+            {% else %}
+            <span class="chip {{ 'auto' if item.kind == 'auto' else 'manual' }}">{{ item.label|lower }}</span>
+            {% endif %}
+            {% set check = archive_checks.get(a.filename) %}
+            <span class="js-check" data-archive="{{ a.filename }}"
+                  data-state="{{ 'ok' if check and check.ok and check.restorable else 'not-restorable' if check and check.ok and check.restorable is sameas false else 'ko' if check and not check.ok else 'checking' if a.filename == archive_checking else 'pending' }}">
+              {%- if check and check.ok and check.restorable -%}
+              <span class="chip verified" title="Archive relue en entier sans erreur le {{ check.checked_at.astimezone().strftime("%d/%m %H:%M") }}">✓ vérifiée</span>
+              {%- elif check and check.ok and check.restorable is sameas false -%}
+              <span class="chip neutral" title="{{ check.detail }}">intègre · sans monde</span>
+              {%- elif check and not check.ok -%}
+              <span class="chip ban" title="{{ check.detail }}">⚠ illisible</span>
+              {%- elif a.filename == archive_checking -%}
+              <span class="muted chip-pending">vérification en cours…</span>
+              {%- else -%}
+              <span class="muted chip-pending" title="La vérification d'intégrité passe en tâche de fond">vérification à venir</span>
+              {%- endif -%}
+            </span>
+            <span class="muted archive-size">{{ (a.size_bytes / 1048576) | round(1) }} Mio</span>
+            </div>
+          </div>
+          <div class="backup-acts archive-entry-actions">
+            {% if can_backup_download %}
+            {% if operation_locked %}
+            <span class="button small disabled" title="Indisponible pendant une opération backup/restore">Télécharger</span>
+            {% else %}
+            <a class="button small" href="/backups/{{ a.filename }}/download">Télécharger</a>
+            {% endif %}
+            {% endif %}
+            {% if can_restore %}
+            {% if operation_locked %}
+            <button class="danger small" disabled title="Une opération backup/restore est déjà en cours">Restaurer</button>
+            {% else %}
+            <form method="post" action="/actions/restore" class="js-restore-form"
+                  data-archive="{{ a.filename }}"
+                  data-size="{{ (a.size_bytes / 1048576) | round(1) }} Mio"
+                  data-created="{{ a.created_at.strftime('%d/%m/%Y %H:%M') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="filename" value="{{ a.filename }}">
+              <button type="button" class="danger small js-restore-open">Restaurer</button>
+            </form>
+            {% endif %}
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+    </section>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">Aucune archive{% if archive_filter != "all" %} pour ce filtre{% endif %} pour le moment.</p>
+  {% endif %}
+</section>
+
+{% if can_restore %}
+<dialog class="player-dialog restore-dialog" id="restoreDialog"
+        aria-labelledby="restoreDialogTitle" aria-describedby="restoreDialogDescription">
+  <form method="dialog" class="player-dialog-box">
+    <h2 id="restoreDialogTitle">Restaurer une sauvegarde</h2>
+    <div class="restore-meta">
+      <b class="tnum" id="restoreMetaName">–</b>
+      <span class="muted" id="restoreMetaInfo"></span>
+    </div>
+    <div class="restore-warning restore-info" id="restoreDialogDescription">
+      <span class="info-badge" aria-hidden="true">i</span>
+      <div>
+        <b>Ce qui va se passer</b>
+        <ol>
+          <li>Le monde actuel est sauvegardé (sauvegarde de sécurité).</li>
+          <li>Le monde est remplacé par l'archive choisie.</li>
+          <li>Le serveur redémarre.</li>
+        </ol>
+      </div>
+    </div>
+    <div class="restore-preflight" id="restorePreflight" aria-live="polite"></div>
+    <label class="confirm-line">
+      <input type="checkbox" id="restoreConsent">
+      Je comprends que le monde actuel sera remplacé.
+    </label>
+    <div class="dialog-actions">
+      <button type="button" class="txtbtn" id="restoreCancel">Annuler</button>
+      <button type="button" class="danger" id="restoreConfirm" disabled>Restaurer</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+
+
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function () {
+  var restoreDialog = document.getElementById("restoreDialog");
+  var restoreForm = null;
+  if (restoreDialog) {
+    var metaName = document.getElementById("restoreMetaName");
+    var metaInfo = document.getElementById("restoreMetaInfo");
+    var consent = document.getElementById("restoreConsent");
+    var confirm = document.getElementById("restoreConfirm");
+    var cancel = document.getElementById("restoreCancel");
+    var preflight = document.getElementById("restorePreflight");
+    var preflightOk = false;
+
+    function openDialog(dialog) {
+      if (dialog.showModal) dialog.showModal();
+      else dialog.setAttribute("open", "");
+    }
+    function closeDialog(dialog) {
+      if (dialog.close) dialog.close();
+      else dialog.removeAttribute("open");
+    }
+    function updateRestoreConfirm() {
+      confirm.disabled = !consent.checked || !preflightOk;
+    }
+    function setPreflight(kind, messages) {
+      preflight.className = "restore-preflight " + kind;
+      if (!messages.length) {
+        preflight.textContent = "";
+        return;
+      }
+      preflight.innerHTML = messages.map(function (message) {
+        return "<div>" + message.replace(/[&<>]/g, function (c) {
+          return {"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c];
+        }) + "</div>";
+      }).join("");
+    }
+    function runPreflight(filename) {
+      // Silencieux quand tout va bien : le bouton qui s'active EST le signal.
+      // On n'affiche un message que s'il y a un obstacle.
+      preflightOk = false;
+      updateRestoreConfirm();
+      setPreflight("checking", ["Vérification en cours…"]);
+      fetch("/backups/restore-preflight?filename=" + encodeURIComponent(filename), {
+        headers: { "X-Requested-With": "fetch" }
+      })
+        .then(function (res) { return res.ok ? res.json() : { ok: false, issues: ["Vérifications impossibles — réessayer."] }; })
+        .then(function (data) {
+          preflightOk = !!data.ok;
+          if (preflightOk) setPreflight("ok", []);
+          else setPreflight("ko", data.issues && data.issues.length ? data.issues : ["Restauration impossible pour le moment."]);
+          updateRestoreConfirm();
+        })
+        .catch(function () {
+          preflightOk = false;
+          setPreflight("ko", ["Vérifications impossibles — réessayer."]);
+          updateRestoreConfirm();
+        });
+    }
+
+    Array.prototype.forEach.call(document.querySelectorAll(".js-restore-open"), function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        restoreForm = btn.closest("form");
+        metaName.textContent = restoreForm.getAttribute("data-archive") || "–";
+        metaInfo.textContent = (restoreForm.getAttribute("data-size") || "?")
+          + " · créée le " + (restoreForm.getAttribute("data-created") || "?");
+        consent.checked = false;
+        confirm.disabled = true;
+        confirm.textContent = "Restaurer";
+        openDialog(restoreDialog);
+        runPreflight(restoreForm.getAttribute("data-archive") || "");
+      });
+    });
+    consent.addEventListener("change", updateRestoreConfirm);
+    cancel.addEventListener("click", function () { restoreForm = null; closeDialog(restoreDialog); });
+    confirm.addEventListener("click", function () {
+      if (!restoreForm || !consent.checked) return;
+      var form = restoreForm;
+      restoreForm = null;
+      confirm.disabled = true;
+      confirm.textContent = "Demande envoyée...";
+      closeDialog(restoreDialog);
+      window.mc.submitForm(form);
+    });
+  }
+
+  // Modale de profil : création (POST /actions/backup-profiles) ou édition
+  // (POST /actions/backup-profiles/<id>/update), même formulaire prérempli.
+  var profileDialog = document.getElementById("profileDialog");
+  if (profileDialog) {
+    var pForm = document.getElementById("profileForm");
+    var pTitle = document.getElementById("profileDialogTitle");
+    var pName = document.getElementById("profileName");
+    var pHours = document.getElementById("profileHours");
+    var pTime = document.getElementById("profileTime");
+    var pDays = document.getElementById("profileDays");
+    var pMonths = document.getElementById("profileMonths");
+    var pSubmit = document.getElementById("profileSubmit");
+    var checks = pForm.querySelectorAll("input[name='include']");
+
+    pHours.addEventListener("change", function () {
+      if (pHours.value === "daily") pTime.removeAttribute("hidden");
+      else pTime.setAttribute("hidden", "");
+    });
+    // « Tout le serveur » est exclusif des autres catégories.
+    Array.prototype.forEach.call(checks, function (box) {
+      box.addEventListener("change", function () {
+        if (box.getAttribute("data-exclusive") && box.checked) {
+          Array.prototype.forEach.call(checks, function (other) {
+            if (other !== box) other.checked = false;
+          });
+        } else if (box.checked) {
+          Array.prototype.forEach.call(checks, function (other) {
+            if (other.getAttribute("data-exclusive")) other.checked = false;
+          });
+        }
+      });
+    });
+    function openProfileDialog(data) {
+      pForm.action = data ? "/actions/backup-profiles/" + data.id + "/update" : "/actions/backup-profiles";
+      pTitle.textContent = data ? "Modifier « " + data.name + " »" : "Nouvelle configuration";
+      pSubmit.textContent = data ? "Enregistrer" : "Créer";
+      pName.value = data ? data.name : "";
+      var included = data ? data.include.split(",") : ["all"];
+      Array.prototype.forEach.call(checks, function (box) {
+        box.checked = included.indexOf(box.value) !== -1;
+      });
+      if (data && data.daily) {
+        pHours.value = "daily"; pTime.value = data.daily; pTime.removeAttribute("hidden");
+      } else {
+        pHours.value = data ? String(data.hours) : "0"; pTime.setAttribute("hidden", "");
+      }
+      pDays.value = data ? data.days : "0";
+      pMonths.value = data ? data.months : "0";
+      if (profileDialog.showModal) profileDialog.showModal();
+      else profileDialog.setAttribute("open", "");
+      pName.focus();
+    }
+    var addBtn = document.getElementById("profileAdd");
+    if (addBtn) addBtn.addEventListener("click", function () { openProfileDialog(null); });
+    Array.prototype.forEach.call(document.querySelectorAll(".js-profile-edit"), function (btn) {
+      btn.addEventListener("click", function () {
+        openProfileDialog({
+          id: btn.getAttribute("data-id"), name: btn.getAttribute("data-name"),
+          include: btn.getAttribute("data-include"), hours: btn.getAttribute("data-hours"),
+          daily: btn.getAttribute("data-daily"), days: btn.getAttribute("data-days"),
+          months: btn.getAttribute("data-months"),
+        });
+      });
+    });
+    document.getElementById("profileCancel").addEventListener("click", function () {
+      if (profileDialog.close) profileDialog.close();
+      else profileDialog.removeAttribute("open");
+    });
+    pForm.addEventListener("submit", function (e) {
+      var any = Array.prototype.some.call(checks, function (b) { return b.checked; });
+      if (!any) {
+        e.preventDefault();
+        window.mc && window.mc.toast && window.mc.toast("Choisis au moins une catégorie à sauvegarder.");
+      }
+    });
+  }
+
+  // Une fin d'opération doit faire apparaître la nouvelle archive sans fermer
+  // une modale que l'utilisateur vient d'ouvrir. Le centre d'activité global
+  // émet cet événement ; on recharge dès que tous les dialogues sont fermés.
+  function refreshArchivesWhenReady() {
+    if (document.querySelector("dialog[open]")) {
+      setTimeout(refreshArchivesWhenReady, 1000);
+      return;
+    }
+    window.location.reload();
+  }
+  window.addEventListener("mc:activity-finished", refreshArchivesWhenReady);
+
+  // Badges d'intégrité : mise à jour en place tant qu'il reste des archives
+  // non vérifiées (retour Jeremy : il fallait recharger pour voir le verdict).
+  var pendingChecks = document.querySelectorAll(".js-check[data-state='pending'], .js-check[data-state='checking']");
+  if (pendingChecks.length) {
+    function renderCheck(el, state) {
+      if (el.getAttribute("data-state") === state) return;
+      el.setAttribute("data-state", state);
+      var chip = document.createElement("span");
+      if (state === "ok") {
+        chip.className = "chip verified";
+        chip.textContent = "✓ vérifiée";
+      } else if (state === "ko") {
+        chip.className = "chip ban";
+        chip.textContent = "⚠ illisible";
+      } else if (state === "not-restorable") {
+        chip.className = "chip neutral";
+        chip.textContent = "intègre · sans monde";
+      } else if (state === "checking") {
+        chip.className = "muted chip-pending";
+        chip.textContent = "vérification en cours…";
+      } else {
+        return;
+      }
+      el.replaceChildren(chip);
+    }
+    function pollChecks() {
+      var remaining = document.querySelectorAll(".js-check[data-state='pending'], .js-check[data-state='checking']");
+      if (!remaining.length) return;  // tout est vérifié : on arrête
+      fetch("/backups/archive-checks", { headers: { "X-Requested-With": "fetch" } })
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) {
+          if (!data || !data.checks) return;
+          Array.prototype.forEach.call(remaining, function (el) {
+            var name = el.getAttribute("data-archive");
+            var verdict = data.checks[name];
+            if (verdict && !verdict.ok) renderCheck(el, "ko");
+            else if (verdict && verdict.restorable === true) renderCheck(el, "ok");
+            else if (verdict && verdict.restorable === false) renderCheck(el, "not-restorable");
+            else if (data.checking === name) renderCheck(el, "checking");
+          });
+        })
+        .catch(function () {})
+        .finally(function () { setTimeout(pollChecks, 10000); });
+    }
+    setTimeout(pollChecks, 10000);
+  }
+})();
+</script>
+{% endblock %}
