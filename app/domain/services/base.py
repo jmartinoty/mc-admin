@@ -59,9 +59,11 @@ from domain.ports import (
     RecurringRestartPort,
     RestartSchedulerPort,
     RestorePort,
+    AlertThresholdsPort,
     ServerDiscoveryPort,
     WatchedContainersPort,
     ServersPort,
+    StorageHistoryPort,
     TempBanPort,
     UpdatePort,
 )
@@ -166,12 +168,16 @@ class ServiceCore:
         spark=None,
         map_probe=None,
         app_update_state=None,
+        app_update_snooze=None,
         app_updater=None,
         self_image=None,
+        storage_history: StorageHistoryPort | None = None,
+        alert_thresholds: AlertThresholdsPort | None = None,
     ) -> None:
         self._game = game
         self._map_probe = map_probe
         self._app_update_state = app_update_state
+        self._app_update_snooze = app_update_snooze
         self._app_updater = app_updater
         self._self_image = self_image
         self._container = container
@@ -186,6 +192,8 @@ class ServiceCore:
         self._archive_checks = archive_checks
         self._archive_validator = archive_validator
         self._worker_integrity = worker_integrity
+        self._storage_history = storage_history
+        self._alert_thresholds = alert_thresholds
         self._backup_profiles = backup_profiles
         self._profile_backup = profile_backup
         self._world_dir = world_dir

@@ -12,6 +12,7 @@ from domain.errors import (
     ServerUnavailable,
 )
 from domain.model import (
+    AlertThresholds,
     AuditEntry,
     ContainerState,
     MetricReading,
@@ -67,6 +68,44 @@ class MonitoringMixin:
         if history_hours not in self.PERFORMANCE_RANGES:
             history_hours = 24
         return self._metrics.performance(history_hours)
+
+    def alert_thresholds(self, user: User) -> AlertThresholds:
+        """Seuils d'alerte actuels de PerfWatcher — même barrière que le
+        reste de la page Performances (lecture, un viewer peut regarder :
+        c'est déjà ce que la copie affiche en dur aujourd'hui)."""
+        self._authorize(user, Permission.STATUS)
+        if self._alert_thresholds is None:
+            return AlertThresholds()
+        return self._alert_thresholds.get()
+
+    # Fenêtre de scan pour les marqueurs de performance — même ordre de
+    # grandeur que le Journal (docs V5.x : fenêtre 2000 entrées).
+    _PERF_EVENT_SCAN_LIMIT = 2000
+
+    def performance_events(self, user: User, since: datetime) -> list[tuple[datetime, str]]:
+        """Marqueurs annotés sur les graphes de performance (sauvegardes
+        réussies, redémarrages, mises à jour DU SERVEUR) — même barrière que
+        le reste de la page (STATUS, un viewer peut regarder). Contrairement
+        au Journal complet (AUDIT_VIEW), on ne retourne QUE le genre et
+        l'instant, jamais l'auteur ni le détail technique.
+
+        La mise à jour DE MC-ADMIN LUI-MÊME (bouton MAJ, `phase=
+        app_update_applied`) est délibérément exclue : elle ne touche pas au
+        jeu, l'annoter sur ce graphe induirait en erreur."""
+        self._authorize(user, Permission.STATUS)
+        events: list[tuple[datetime, str]] = []
+        for entry in self._audit.recent(self._PERF_EVENT_SCAN_LIMIT):
+            if entry.timestamp < since or entry.outcome != "allowed":
+                continue
+            if entry.action == Permission.BACKUP_TRIGGER.value:
+                if "phase=backup_done" in entry.detail:
+                    events.append((entry.timestamp, "backup"))
+            elif entry.action == Permission.RESTART.value:
+                events.append((entry.timestamp, "restart"))
+            elif entry.action == Permission.UPDATE.value:
+                if "phase=app_update_applied" not in entry.detail:
+                    events.append((entry.timestamp, "update"))
+        return events
 
     def player_history(self, user: User) -> list[PlayerSummary]:
         """Temps de jeu cumulé + dernière connexion (même barrière que status).

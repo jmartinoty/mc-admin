@@ -169,7 +169,7 @@ def index(request: Request):
             ctx["update"] = None
         try:
             status = request.app.state.service.app_update_status(user, APP_VERSION)
-            ctx["app_update"] = status if status.update_available else None
+            ctx["app_update"] = status if (status.update_available and not status.snoozed) else None
         except DomainError:
             ctx["app_update"] = None
     return templates.TemplateResponse(request, "status.html", ctx)
@@ -190,6 +190,22 @@ def action_app_update(request: Request, csrf_token: str = Form(...)):
                     code="MAJ-01", details=str(exc))
         return RedirectResponse("/", status_code=303)
     return RedirectResponse("/updating", status_code=303)
+
+
+@router.post("/actions/app-update/snooze")
+def action_app_update_snooze(request: Request, csrf_token: str = Form(...)):
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        request.app.state.service.snooze_app_update(user)
+        request.session["flash"] = "D'accord, je te le rappellerai demain."
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except DomainError as exc:
+        flash_error(request, "Impossible de reporter le rappel", code="MAJ-02", details=str(exc))
+    return RedirectResponse("/", status_code=303)
 
 
 @router.get("/updating")
@@ -574,7 +590,8 @@ def map_embed(request: Request, path: str = ""):
         status, headers, chunks = request.app.state.map_open(
             base, path, request.url.query,
             if_none_match=request.headers.get("if-none-match", ""),
-            if_modified_since=request.headers.get("if-modified-since", ""))
+            if_modified_since=request.headers.get("if-modified-since", ""),
+            accept_encoding=request.headers.get("accept-encoding", ""))
     except MapUnreachable as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     media_type = headers.pop("Content-Type", "application/octet-stream")
@@ -795,7 +812,7 @@ EVENT_LABELS: list[tuple[str, str]] = [
     ("restart", "Redémarrages effectués"),
     ("update", "Mises à jour du serveur"),
     ("health", "Pannes de conteneurs"),
-    ("performance", "Lag serveur (MSPT > 50 ms soutenu)"),
+    ("performance", "Lag serveur (MSPT soutenu au-dessus du seuil réglé)"),
     ("disk", "Espace disque bas (volume des sauvegardes)"),
     ("restore", "Restaurations"),
 ]
@@ -1030,14 +1047,45 @@ def performance_page(request: Request):
     except DomainError:
         perf = None  # Prometheus injoignable -> page « indisponible »
     ctx["perf"] = perf
-    ctx["mspt_chart"] = _mspt_chart(perf.mspt_history, hours) if perf else None
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    events = request.app.state.service.performance_events(user, since)
+    thresholds = request.app.state.service.alert_thresholds(user)
+    ctx["alert_thresholds"] = thresholds
+    ctx["mspt_chart"] = (
+        _mspt_chart(perf.mspt_history, hours, events=events, threshold_ms=thresholds.mspt_threshold_ms)
+        if perf else None
+    )
     ctx["perf_range"] = range_key
     ctx["perf_ranges"] = _PERF_RANGE_CHOICES
     ctx["can_spark"] = user.can(Permission.RCON_RAW)
+    ctx["can_manage_alerts"] = user.can(Permission.SERVER_MANAGE)
     ctx["spark_profiles"] = (request.app.state.service.spark_profiles(user)
                              if ctx["can_spark"] else [])
     ctx["profiling_seconds"] = request.query_params.get("profiling", "")
     return templates.TemplateResponse(request, "performance.html", ctx)
+
+
+@router.post("/actions/performance/thresholds")
+def action_set_alert_thresholds(
+    request: Request,
+    mspt_threshold_ms: float = Form(...),
+    disk_min_free_gib: float = Form(...),
+    mspt_sustained_minutes: float = Form(...),
+    csrf_token: str = Form(...),
+):
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        request.app.state.service.set_alert_thresholds(
+            user, mspt_threshold_ms, disk_min_free_gib, mspt_sustained_minutes)
+        request.session["flash"] = "Seuils d'alerte mis à jour."
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except DomainError as exc:
+        flash_error(request, "Les seuils n'ont pas pu être enregistrés", code="PRF-03", details=str(exc))
+    return RedirectResponse("/performance", status_code=303)
 
 
 @router.post("/actions/performance/profile")
@@ -1098,15 +1146,25 @@ _PERF_TICK_FORMATS = {24: "%H:%M", 72: "%d/%m %Hh", 168: "%d/%m"}
 _PERF_WINDOW_LABELS = {24: "15 min", 72: "30 min", 168: "1 h"}
 
 
-def _mspt_chart(history, hours=24, width=600.0, height=140.0, pad=6.0):
-    """Points SVG du graphe MSPT + ordonnée du seuil 50 ms (échelle commune).
-    Contrairement aux sparklines (échelle min-max), l'échelle inclut TOUJOURS
-    0 et le seuil : une ligne plate à 2 ms doit se voir loin du danger.
-    Les repères horaires sont rendus SOUS le svg (preserveAspectRatio=none
-    déformerait du texte embarqué)."""
+_PERF_EVENT_LABELS = {"backup": "Sauvegarde", "restart": "Redémarrage", "update": "Mise à jour"}
+
+
+def _mspt_chart(history, hours=24, width=600.0, height=140.0, pad=6.0, events=(),
+                threshold_ms=50.0):
+    """Points SVG du graphe MSPT + ordonnée du seuil réglable (échelle
+    commune — backlog fiabilité n° 4). Contrairement aux sparklines (échelle
+    min-max), l'échelle inclut TOUJOURS 0 et le seuil : une ligne plate à
+    2 ms doit se voir loin du danger. Les repères horaires sont rendus SOUS
+    le svg (preserveAspectRatio=none déformerait du texte embarqué).
+
+    `events` (sauvegardes/redémarrages/màj, cf. performance_events) sont
+    replacés sur le MÊME axe temporel que les points (`now` calculé une
+    seule fois, ci-dessous) — sans ça, une petite dérive entre l'instant du
+    scan d'audit et celui du rendu déplacerait le marqueur du mauvais côté
+    d'un pic MSPT."""
     if not history or len(history) < 2:
         return None
-    top = max(max(history), 55.0)
+    top = max(max(history), threshold_ms * 1.1)
     span = width - 2 * pad
     step = span / (len(history) - 1)
 
@@ -1118,13 +1176,30 @@ def _mspt_chart(history, hours=24, width=600.0, height=140.0, pad=6.0):
     ticks = [(now - timedelta(hours=hours * (1.0 - f))).strftime(fmt)
              for f in (0.0, 0.25, 0.5, 0.75, 1.0)]
     points = " ".join(f"{pad + i * step:.1f},{y(v)}" for i, v in enumerate(history))
+
+    since = now - timedelta(hours=hours)
+    markers = []
+    for timestamp, kind in events:
+        at = timestamp.astimezone()
+        if at < since or at > now:
+            continue
+        frac = (at - since).total_seconds() / (hours * 3600)
+        markers.append({
+            "x": round(pad + frac * span, 1),
+            "kind": kind,
+            "label": _PERF_EVENT_LABELS.get(kind, kind),
+            "at": at.strftime("%d/%m %H:%M"),
+        })
+
     return {
         "points": points,
-        "threshold_y": y(50.0),
+        "threshold_y": y(threshold_ms),
+        "threshold_ms": threshold_ms,
         "max": round(max(history), 1),
-        "over": any(v > 50.0 for v in history),
+        "over": any(v > threshold_ms for v in history),
         "ticks": ticks,
         "window": _PERF_WINDOW_LABELS.get(hours, "15 min"),
+        "markers": markers,
     }
 
 

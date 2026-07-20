@@ -5,7 +5,7 @@ Le domaine est exercé uniquement via des fakes de ports (aucun Docker/RCON).
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from domain.errors import (
     BackupArchiveNotFound,
@@ -25,11 +25,13 @@ from adapters.pending_restore import InMemoryPendingRestore
 from adapters.restart_schedule import InMemoryRestartSchedule
 from domain.model import (
     ArchiveCheck,
+    AuditEntry,
     BackupArchive,
     PendingOpLevel,
     PendingRestore,
     Player,
     RestoreOperation,
+    StorageSnapshot,
 )
 from domain.rbac import build_roles, build_users
 from domain.services import AdminService
@@ -1774,6 +1776,62 @@ class TestEvents(ServiceTestBase):
         self.assertEqual(self.audit.entries[-1].outcome, "denied")
 
 
+class TestPerformanceEvents(ServiceTestBase):
+    """Marqueurs annotés des graphes de performance (UX-7) : sauvegardes,
+    redémarrages, mises à jour DU SERVEUR — jamais l'auto-mise à jour de
+    mc-admin, jamais un refus, jamais l'auteur ni le détail technique."""
+
+    def _now(self):
+        return FixedClock().now()
+
+    def test_includes_backup_restart_and_server_update(self):
+        self.service.restart(self.owner)
+        self.audit.record(AuditEntry(
+            timestamp=self._now(), username="backup-watch", role="automation",
+            action="BACKUP_TRIGGER", target=CONTAINER_NAME, outcome="allowed",
+            detail="phase=backup_done kind=scheduled archive=x.tar.gz size_mio=12",
+        ))
+        self.audit.record(AuditEntry(
+            timestamp=self._now(), username="jeremy", role="owner",
+            action="UPDATE", target=CONTAINER_NAME, outcome="allowed",
+            detail="say; save-all; mc-updater démarré",
+        ))
+        events = self.service.performance_events(self.owner, self._now() - timedelta(hours=1))
+        self.assertEqual(sorted(kind for _, kind in events), ["backup", "restart", "update"])
+
+    def test_excludes_mc_admin_self_update(self):
+        self.audit.record(AuditEntry(
+            timestamp=self._now(), username="jeremy", role="owner",
+            action="UPDATE", target=CONTAINER_NAME, outcome="allowed",
+            detail="phase=app_update_applied version=0.10.0",
+        ))
+        events = self.service.performance_events(self.owner, self._now() - timedelta(hours=1))
+        self.assertEqual(events, [])
+
+    def test_excludes_denied_and_error_outcomes(self):
+        self.audit.record(AuditEntry(
+            timestamp=self._now(), username="jeremy", role="owner",
+            action="RESTART", target=CONTAINER_NAME, outcome="denied", detail="",
+        ))
+        self.audit.record(AuditEntry(
+            timestamp=self._now(), username="jeremy", role="owner",
+            action="UPDATE", target=CONTAINER_NAME, outcome="error", detail="échec",
+        ))
+        events = self.service.performance_events(self.owner, self._now() - timedelta(hours=1))
+        self.assertEqual(events, [])
+
+    def test_excludes_events_before_since(self):
+        self.service.restart(self.owner)
+        events = self.service.performance_events(self.owner, self._now() + timedelta(seconds=1))
+        self.assertEqual(events, [])
+
+    def test_guest_denied_and_audited(self):
+        with self.assertRaises(PermissionDenied):
+            self.service.performance_events(self.guest, self._now())
+        self.assertEqual(self.audit.entries[-1].outcome, "denied")
+        self.assertEqual(self.audit.entries[-1].action, "STATUS")
+
+
 class TestLogs(ServiceTestBase):
     def test_friend_can_view_logs(self):
         lines = self.service.recent_logs(self.friend, lines=50)
@@ -1981,6 +2039,87 @@ class TestBackupProfiles(ServiceTestBase):
         self.profile_backup.running = False
         self.service._scan_backup_outcomes()
         self.assertEqual(self.backup_archives.deleted, [])
+
+
+class TestStorageOverview(ServiceTestBase):
+    """Historique de stockage + projection de saturation (backlog n° 6)."""
+
+    def _history(self, **kwargs):
+        from tests.fakes import FakeStorageHistory
+        history = FakeStorageHistory(**kwargs)
+        # Injecté après coup : ServiceTestBase ne câble pas ce port optionnel.
+        self.service._storage_history = history
+        return history
+
+    def test_no_port_configured_returns_empty(self):
+        history, saturation = self.service.storage_overview(self.owner)
+        self.assertEqual(history, [])
+        self.assertIsNone(saturation)
+
+    def test_returns_history_and_no_saturation_on_flat_trend(self):
+        self._history(snapshots=[
+            StorageSnapshot(date="2026-07-01", free_bytes=1000, families={"manual": 500}),
+            StorageSnapshot(date="2026-07-05", free_bytes=1000, families={"manual": 500}),
+        ])
+        history, saturation = self.service.storage_overview(self.owner)
+        self.assertEqual([s.date for s in history], ["2026-07-01", "2026-07-05"])
+        self.assertIsNone(saturation)  # tendance plate : rien à projeter
+
+    def test_projects_saturation_date_on_shrinking_free_space(self):
+        self._history(snapshots=[
+            StorageSnapshot(date="2026-07-01", free_bytes=1000, families={"manual": 500}),
+            StorageSnapshot(date="2026-07-05", free_bytes=600, families={"manual": 900}),
+        ])
+        _, saturation = self.service.storage_overview(self.owner)
+        # -100 octets/jour, 600 restants -> 6 jours de plus depuis le 05/07.
+        self.assertEqual(saturation, date(2026, 7, 11))
+
+    def test_guest_denied(self):
+        self._history()
+        with self.assertRaises(PermissionDenied):
+            self.service.storage_overview(self.guest)
+
+
+class TestAlertThresholds(ServiceTestBase):
+    """Seuils d'alerte réglables (backlog fiabilité n° 4)."""
+
+    def _thresholds(self):
+        from tests.fakes import FakeAlertThresholds
+        store = FakeAlertThresholds()
+        # Injecté après coup : ServiceTestBase ne câble pas ce port optionnel.
+        self.service._alert_thresholds = store
+        return store
+
+    def test_no_port_configured_returns_domain_defaults(self):
+        from domain.model import AlertThresholds
+        self.assertEqual(self.service.alert_thresholds(self.owner), AlertThresholds())
+
+    def test_owner_can_set_and_read_back(self):
+        self._thresholds()
+        self.service.set_alert_thresholds(self.owner, 80.0, 25.0, 5.0)
+        result = self.service.alert_thresholds(self.owner)
+        self.assertEqual((result.mspt_threshold_ms, result.disk_min_free_gib,
+                         result.mspt_sustained_minutes), (80.0, 25.0, 5.0))
+        self.assertIn("phase=alert_thresholds_updated", self.audit.entries[-1].detail)
+
+    def test_admin_denied_and_audited(self):
+        self._thresholds()
+        with self.assertRaises(PermissionDenied):
+            self.service.set_alert_thresholds(self.admin, 80.0, 25.0, 5.0)
+        self.assertEqual(self.audit.entries[-1].outcome, "denied")
+
+    def test_invalid_values_rejected(self):
+        self._thresholds()
+        with self.assertRaises(InvalidGameValue):
+            self.service.set_alert_thresholds(self.owner, 0, 25.0, 5.0)
+        with self.assertRaises(InvalidGameValue):
+            self.service.set_alert_thresholds(self.owner, 80.0, -1, 5.0)
+        with self.assertRaises(InvalidGameValue):
+            self.service.set_alert_thresholds(self.owner, 80.0, 25.0, 0)
+
+    def test_set_without_port_configured_raises(self):
+        with self.assertRaises(ServerUnavailable):
+            self.service.set_alert_thresholds(self.owner, 80.0, 25.0, 5.0)
 
 
 class TestEventTags(ServiceTestBase):

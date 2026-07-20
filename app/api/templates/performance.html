@@ -17,11 +17,11 @@
     <div class="metric-label">TPS <span class="info-tip" tabindex="0" aria-label="Ticks par seconde — 20 = parfait. En dessous, le temps du jeu ralentit.">?<span class="tip-body">Ticks par seconde — 20 = parfait. En dessous, le temps du jeu ralentit.</span></span></div>
   </div>
   <div class="metric">
-    <div class="metric-value {{ 'perf-bad' if perf.mspt_mean is not none and perf.mspt_mean > 50 }}">{% if perf.mspt_mean is not none %}{{ "%.1f"|format(perf.mspt_mean) }} <span class="unit">ms</span>{% else %}<span class="muted">–</span>{% endif %}</div>
-    <div class="metric-label">MSPT moyen <span class="info-tip" tabindex="0" aria-label="Durée moyenne d'un tick. Au-delà de 50 ms, le serveur ne tient plus 20 TPS.">?<span class="tip-body">Durée moyenne d'un tick. Au-delà de 50 ms, le serveur ne tient plus 20 TPS.</span></span></div>
+    <div class="metric-value {{ 'perf-bad' if perf.mspt_mean is not none and perf.mspt_mean > alert_thresholds.mspt_threshold_ms }}">{% if perf.mspt_mean is not none %}{{ "%.1f"|format(perf.mspt_mean) }} <span class="unit">ms</span>{% else %}<span class="muted">–</span>{% endif %}</div>
+    <div class="metric-label">MSPT moyen <span class="info-tip" tabindex="0" aria-label="Durée moyenne d'un tick. Au-delà de {{ alert_thresholds.mspt_threshold_ms | int }} ms, le serveur ne tient plus 20 TPS.">?<span class="tip-body">Durée moyenne d'un tick. Au-delà de {{ alert_thresholds.mspt_threshold_ms | int }} ms, le serveur ne tient plus 20 TPS.</span></span></div>
   </div>
   <div class="metric">
-    <div class="metric-value {{ 'perf-bad' if perf.mspt_max is not none and perf.mspt_max > 50 }}">{% if perf.mspt_max is not none %}{{ "%.1f"|format(perf.mspt_max) }} <span class="unit">ms</span>{% else %}<span class="muted">–</span>{% endif %}</div>
+    <div class="metric-value {{ 'perf-bad' if perf.mspt_max is not none and perf.mspt_max > alert_thresholds.mspt_threshold_ms }}">{% if perf.mspt_max is not none %}{{ "%.1f"|format(perf.mspt_max) }} <span class="unit">ms</span>{% else %}<span class="muted">–</span>{% endif %}</div>
     <div class="metric-label">MSPT max</div>
   </div>
   <div class="metric">
@@ -45,21 +45,55 @@
   </div>
   {% if mspt_chart %}
   <svg class="perf-chart" viewBox="0 0 600 140" preserveAspectRatio="none" role="img"
-       aria-label="Pire MSPT par fenêtre de {{ mspt_chart.window }}, seuil à 50 millisecondes">
+       aria-label="Pire MSPT par fenêtre de {{ mspt_chart.window }}, seuil à {{ mspt_chart.threshold_ms | int }} millisecondes">
     <line class="perf-threshold" x1="0" y1="{{ mspt_chart.threshold_y }}" x2="600" y2="{{ mspt_chart.threshold_y }}"/>
     <polyline class="perf-line" points="{{ mspt_chart.points }}"/>
+    {% for m in mspt_chart.markers %}
+    <g class="perf-marker perf-marker-{{ m.kind }}">
+      <title>{{ m.label }} · {{ m.at }}</title>
+      <line x1="{{ m.x }}" y1="4" x2="{{ m.x }}" y2="136"/>
+      <circle cx="{{ m.x }}" cy="6" r="3"/>
+    </g>
+    {% endfor %}
   </svg>
   <div class="perf-axis" aria-hidden="true">
     {% for t in mspt_chart.ticks %}<span>{{ t }}</span>{% endfor %}
   </div>
   <p class="muted perf-legend">Pic : {{ mspt_chart.max }} ms · chaque point est le
     pire moment de sa fenêtre de {{ mspt_chart.window }} — un à-coup ne peut pas se
-    cacher entre deux points · la ligne pointillée marque 50 ms : au-dessus,
-    le serveur ralentit (moins de 20 TPS).</p>
+    cacher entre deux points · la ligne pointillée marque {{ mspt_chart.threshold_ms | int }} ms : au-dessus,
+    le serveur ralentit (moins de 20 TPS).
+    {%- if mspt_chart.markers %} Repères : <span class="perf-legend-chip perf-marker-backup">●</span> sauvegarde
+    · <span class="perf-legend-chip perf-marker-restart">●</span> redémarrage
+    · <span class="perf-legend-chip perf-marker-update">●</span> mise à jour.{% endif %}</p>
   {% else %}
   <p class="muted">Pas encore assez d'historique pour tracer la courbe sur cette plage.</p>
   {% endif %}
 </section>
+
+{% if can_manage_alerts %}
+<section class="card">
+  <h2>Seuils d'alerte <span class="bc-sub">quand PerfWatcher prévient (Discord/Telegram)</span></h2>
+  <form method="post" action="/actions/performance/thresholds" class="inline alert-thresholds-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>MSPT
+      <span class="mini"><input type="number" name="mspt_threshold_ms" min="1" max="1000" step="1"
+        value="{{ alert_thresholds.mspt_threshold_ms | int }}"><span>ms</span></span>
+    </label>
+    <label>pendant
+      <span class="mini"><input type="number" name="mspt_sustained_minutes" min="1" max="120" step="1"
+        value="{{ alert_thresholds.mspt_sustained_minutes | int }}"><span>min</span></span>
+    </label>
+    <label>Disque libre sous
+      <span class="mini"><input type="number" name="disk_min_free_gib" min="1" max="100000" step="1"
+        value="{{ alert_thresholds.disk_min_free_gib | int }}"><span>Gio</span></span>
+    </label>
+    <button class="small">Enregistrer</button>
+  </form>
+  <p class="muted rules-hint">Ces seuils pilotent aussi le badge « seuil dépassé » ci-dessus et
+    les tuiles MSPT. Un changement s'applique à la prochaine sonde (jusqu'à 1 min).</p>
+</section>
+{% endif %}
 
 <div class="perf-cols">
 <section class="card">

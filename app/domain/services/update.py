@@ -6,12 +6,15 @@ assemblé dans la façade AdminService (__init__.py).
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 from domain.errors import (
     ServerUnavailable,
     UpdateBlocked,
     UpdateUnavailable,
 )
 from domain.model import (
+    AppUpdateSnooze,
     AppUpdateStatus,
     Permission,
     UpdateStatus,
@@ -110,9 +113,35 @@ class UpdateMixin:
         release, checked_at = known
         available = is_newer_app_version(release.version, current_version)
         can_apply, reason = self._app_update_applicable()
+        snoozed = False
+        if self._app_update_snooze is not None:
+            snooze = self._app_update_snooze.get()
+            # Le report ne vaut que pour LA version qu'il a repoussée — une
+            # nouveauté plus récente doit toujours pouvoir se signaler.
+            if snooze is not None and snooze.version == release.version \
+                    and snooze.until > self._clock.now():
+                snoozed = True
         return AppUpdateStatus(current_version=current_version, latest=release,
                                update_available=available, checked_at=checked_at,
-                               can_apply=can_apply, reason=reason)
+                               can_apply=can_apply, reason=reason, snoozed=snoozed)
+
+    def snooze_app_update(self, user: User, hours: float = 24.0) -> None:
+        """« Me le rappeler plus tard » : repousse le bandeau pour CETTE
+        version connue, même barrière que le bouton Appliquer (UPDATE).
+        Fonctionne aussi sur une installation build git (le bandeau reste
+        informatif là-bas, sans bouton — le repousser reste légitime)."""
+        self._authorize(user, Permission.UPDATE)
+        known = self._app_update_state.get() if self._app_update_state else None
+        if known is None:
+            raise UpdateBlocked("aucune mise à jour connue — rien à repousser")
+        if self._app_update_snooze is None:
+            raise UpdateUnavailable("report du rappel non configuré côté serveur")
+        release = known[0]
+        until = self._clock.now() + timedelta(hours=hours)
+        self._app_update_snooze.set(AppUpdateSnooze(version=release.version, until=until))
+        self._record(user, Permission.UPDATE, "allowed",
+                     f"phase=app_update_snoozed version={release.version} "
+                     f"until={until.isoformat()}")
 
     def _app_update_applicable(self) -> tuple[bool, str]:
         """Le bouton « Appliquer » a-t-il un sens ici ? Install ghcr = oui ;

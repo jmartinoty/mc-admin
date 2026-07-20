@@ -109,6 +109,21 @@
       </div>
       <p class="muted rules-hint">0 jour = conserver toutes les archives sans limite.</p>
     </fieldset>
+    <fieldset class="profile-fieldset">
+      <legend>4 · Destination</legend>
+      <div class="dest-options">
+        <label class="dest-option is-active">
+          <input type="radio" name="destination" value="local" checked>
+          <span class="dest-icon" aria-hidden="true">🖥</span>
+          <span><b>Local</b> <span class="muted">— ce NAS, comme aujourd'hui</span></span>
+        </label>
+        <label class="dest-option is-disabled" title="Bientôt disponible">
+          <input type="radio" name="destination" value="remote" disabled>
+          <span class="dest-icon" aria-hidden="true">☁</span>
+          <span><b>Distant / Cloud</b> <span class="badge">bientôt disponible</span></span>
+        </label>
+      </div>
+    </fieldset>
     <div class="dialog-actions">
       <button type="button" class="txtbtn" id="profileCancel">Annuler</button>
       <button id="profileSubmit">Créer</button>
@@ -124,6 +139,30 @@
     {{ (backup_total_bytes / 1073741824) | round(1) }} Go occupés
     {%- if backup_free_bytes is not none %} · {{ (backup_free_bytes / 1073741824) | round(0) | int }} Go libres sur le volume{% endif %}
   </p>
+  {% if storage_days_tracked > 1 %}
+  {% set storage_points = spark_points(storage_total_series) %}
+  <div class="storage-history">
+    {% if storage_points %}
+    <svg class="spark storage-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+      <polyline points="{{ storage_points }}"/>
+    </svg>
+    {% endif %}
+    <div class="storage-history-text">
+      <p class="muted storage-families">
+        {% for fam, size in storage_families.items() | sort %}
+        <span class="chip manual">{{ storage_family_labels.get(fam, fam) }} · {{ (size / 1073741824) | round(2) }} Go</span>
+        {% endfor %}
+      </p>
+      <p class="muted">
+        {% if storage_saturation %}Au rythme actuel, le volume serait plein vers le
+          <b>{{ storage_saturation.strftime("%d/%m/%Y") }}</b> — pense à faire de la place ou agrandir le volume.
+        {% else %}Occupation stable ou en baisse sur la période suivie — pas de saturation prévisible.{% endif %}
+      </p>
+    </div>
+  </div>
+  {% elif can_manage %}
+  <p class="muted">Historique de stockage : pas encore assez de jours suivis pour une tendance.</p>
+  {% endif %}
   <div class="archive-filter-tabs">
     {% for key, label in archive_type_labels.items() %}
     <a class="tab-link {{ 'on' if archive_filter == key }}"

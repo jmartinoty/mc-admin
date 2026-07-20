@@ -4,6 +4,39 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.10.1 — 2026-07-20
+
+### Terminal
+- Pause du défilement des logs — utile pour lire tranquillement pendant un
+  incident, sans que l'écran continue de défiler.
+- Recherche avec surlignage des mots trouvés et compteur de résultats.
+- Copier une ligne de log en un clic (icône au survol de la ligne).
+- Commandes RCON favorites, séparées de l'historique : cliquer un favori
+  remplit la commande sans l'envoyer, l'exécution reste toujours volontaire.
+
+### Performances
+- Le graphe MSPT marque désormais les sauvegardes, redémarrages et mises à
+  jour du serveur — plus facile de relier un pic de lag à un événement.
+- Seuils d'alerte réglables directement dans l'interface (MSPT, espace
+  disque, durée avant que mc-admin prévienne).
+
+### Sauvegardes
+- Nouvelle étape « Destination » dans l'assistant de création de profil
+  (Local, comme aujourd'hui ; Distant/Cloud en aperçu, bientôt disponible).
+- Historique de stockage : courbe d'occupation par type de sauvegarde et
+  estimation honnête (« saturation prévue vers telle date », ou « pas de
+  souci prévisible »).
+
+### Carte
+- Déplacement plus fluide sur la carte (les tuiles se chargent plus vite).
+- Distance de rendu en haute précision étendue.
+
+### Mise à jour
+- Bandeau de mise à jour compact, avec un bouton « Voir le détail » pour les
+  notes complètes.
+- Bouton « Me le rappeler plus tard » : repousse le bandeau d'un jour. Si une
+  version plus récente sort entre-temps, le rappel repart quand même.
+
 ## v0.10.0 — 2026-07-20
 
 ### Mode maintenance (nouveau)

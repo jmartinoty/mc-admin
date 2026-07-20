@@ -124,9 +124,40 @@ class TestOpenMapPath(unittest.TestCase):
         def opener(url, timeout):
             raise urllib.error.HTTPError("http://minecraft:8100/maps/vide.json", 404,
                                          "tuile absente", None, io.BytesIO(b""))
-        status, _, chunks = open_map_path("http://minecraft:8100", "maps/vide.json", opener=opener)
+        status, headers, chunks = open_map_path("http://minecraft:8100", "maps/vide.json",
+                                                opener=opener)
         self.assertEqual(status, 404)
         self.assertEqual(b"".join(chunks), b"")
+        # BlueMap n'envoie AUCUN en-tête de cache sur ses 404 : sans ce petit
+        # max-age, chaque déplacement re-demande toutes les tuiles vides.
+        self.assertEqual(headers.get("Cache-Control"), "max-age=60")
+
+    def test_gzip_is_negotiated_upstream_when_client_accepts(self):
+        seen = {}
+
+        def opener(request, timeout):
+            seen.update(request.header_items())
+            response = _FakeResponse(body=b"\x1f\x8b...", content_type="application/octet-stream")
+            response.headers["Content-Encoding"] = "gzip"
+            return response
+
+        _, headers, chunks = open_map_path("http://minecraft:8100", "tiles/0/x0/z0.prbm",
+                                           opener=opener, accept_encoding="gzip, deflate, br")
+        self.assertEqual(seen.get("Accept-encoding"), "gzip")   # gzip SEUL : format natif BlueMap
+        self.assertEqual(headers.get("Content-Encoding"), "gzip")  # relayé tel quel au navigateur
+        self.assertEqual(headers.get("Vary"), "Accept-Encoding")
+        self.assertEqual(b"".join(chunks), b"\x1f\x8b...")      # octets JAMAIS décodés en route
+
+    def test_no_gzip_requested_when_client_does_not_accept_it(self):
+        seen = {}
+
+        def opener(request, timeout):
+            seen.update(request.header_items())
+            return _FakeResponse()
+
+        _, headers, _ = open_map_path("http://minecraft:8100", "tile.png", opener=opener)
+        self.assertNotIn("Accept-encoding", seen)
+        self.assertNotIn("Vary", headers)
 
     def test_unreachable_raises_map_unreachable(self):
         def opener(url, timeout):

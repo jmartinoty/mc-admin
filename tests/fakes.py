@@ -29,6 +29,7 @@ from domain.model import (
     PlayerSession,
     PlayerStats,
     PlayerSummary,
+    StorageSnapshot,
     UpdateStatus,
 )
 
@@ -342,6 +343,36 @@ class FakeArchiveChecks:
 
     def forget_missing(self, existing):
         self.checks = {k: v for k, v in self.checks.items() if k in existing}
+
+
+class FakeStorageHistory:
+    """Fake StorageHistoryPort — historique en mémoire, trié par date."""
+
+    def __init__(self, snapshots: list[StorageSnapshot] | None = None):
+        self._snapshots = list(snapshots or [])
+
+    def record_today(self, snapshot: StorageSnapshot) -> None:
+        self._snapshots = [s for s in self._snapshots if s.date != snapshot.date]
+        self._snapshots.append(snapshot)
+        self._snapshots.sort(key=lambda s: s.date)
+
+    def history(self, days: int = 30) -> list[StorageSnapshot]:
+        ordered = sorted(self._snapshots, key=lambda s: s.date)
+        return ordered[-days:] if days > 0 else ordered
+
+
+class FakeAlertThresholds:
+    """Fake AlertThresholdsPort — en mémoire, défauts du domaine si jamais réglé."""
+
+    def __init__(self, thresholds=None):
+        from domain.model import AlertThresholds
+        self._thresholds = thresholds or AlertThresholds()
+
+    def get(self):
+        return self._thresholds
+
+    def set(self, thresholds) -> None:
+        self._thresholds = thresholds
 
 
 class FakeArchiveValidator:
@@ -746,6 +777,19 @@ class FakeAppUpdateState:
     def set(self, release, checked_at):
         self.release = release
         self.checked_at = checked_at
+
+
+class FakeAppUpdateSnooze:
+    """Fake AppUpdateSnoozePort — report en mémoire."""
+
+    def __init__(self, snooze=None):
+        self.snooze = snooze
+
+    def get(self):
+        return self.snooze
+
+    def set(self, snooze) -> None:
+        self.snooze = snooze
 
 
 class FakeAppUpdater:

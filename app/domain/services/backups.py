@@ -5,7 +5,7 @@ ServiceCore (base.py), assemblé dans la façade AdminService (__init__.py).
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 from domain.errors import (
     BackupArchiveNotFound,
@@ -26,6 +26,7 @@ from domain.model import (
     Permission,
     RestoreOperation,
     RestoreProgress,
+    StorageSnapshot,
     User,
 )
 from domain.ports import (
@@ -38,6 +39,25 @@ from domain.ports import (
 from domain.services.base import (
     _BACKUP_WATCH_USER,
 )
+
+
+def _project_saturation(history: list[StorageSnapshot]) -> date | None:
+    """Projection LINÉAIRE simple sur l'espace libre : au rythme actuel de
+    remplissage, quand le volume sera-t-il plein ? Une tendance plate ou en
+    amélioration (rétention qui suit le rythme, ménage manuel) n'a pas de
+    date honnête à donner — None plutôt qu'une extrapolation absurde."""
+    usable = [p for p in history if p.free_bytes is not None]
+    if len(usable) < 2:
+        return None
+    first, last = usable[0], usable[-1]
+    span_days = (date.fromisoformat(last.date) - date.fromisoformat(first.date)).days
+    if span_days <= 0:
+        return None
+    slope_per_day = (last.free_bytes - first.free_bytes) / span_days
+    if slope_per_day >= 0:
+        return None
+    days_left = last.free_bytes / -slope_per_day
+    return date.fromisoformat(last.date) + timedelta(days=days_left)
 
 
 class BackupsMixin:
@@ -406,6 +426,16 @@ class BackupsMixin:
         """Espace libre du volume des sauvegardes (lecture non auditée)."""
         self._authorize(user, Permission.BACKUP_TRIGGER)
         return self._backup_archives.free_bytes()
+
+    def storage_overview(self, user: User, days: int = 30) -> tuple[list[StorageSnapshot], date | None]:
+        """Historique de stockage + projection de saturation (backlog
+        fiabilité n° 6). Même barrière que le reste de la page (lecture non
+        auditée)."""
+        self._authorize(user, Permission.BACKUP_TRIGGER)
+        if self._storage_history is None:
+            return [], None
+        history = self._storage_history.history(days)
+        return history, _project_saturation(history)
 
     def backup_download_path(self, user: User, filename: str):
         """Chemin local d'une archive téléchargeable."""

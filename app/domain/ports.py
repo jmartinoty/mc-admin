@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Protocol
 
 from .model import (
+    AlertThresholds,
     AppRelease,
+    AppUpdateSnooze,
     ArchiveCheck,
     AuditEntry,
     BackupProfile,
@@ -36,6 +38,7 @@ from .model import (
     PlayerSummary,
     ScheduledRestart,
     ServerEntry,
+    StorageSnapshot,
     UpdateStatus,
     WorkerCheck,
 )
@@ -99,6 +102,13 @@ class AppUpdateStatePort(Protocol):
 
     def get(self) -> tuple[AppRelease, datetime] | None: ...
     def set(self, release: AppRelease, checked_at: datetime) -> None: ...
+
+
+class AppUpdateSnoozePort(Protocol):
+    """Report du bandeau MAJ (« me le rappeler plus tard »)."""
+
+    def get(self) -> AppUpdateSnooze | None: ...
+    def set(self, snooze: AppUpdateSnooze) -> None: ...
 
 
 class AppUpdaterPort(Protocol):
@@ -202,6 +212,26 @@ class BackupArchivesPort(Protocol):
     def archive_path(self, filename: str) -> Path | None: ...
     def delete_archive(self, filename: str) -> bool: ...  # scheduled/ uniquement
     def free_bytes(self) -> int | None: ...               # espace libre du volume (None = illisible)
+
+
+class StorageHistoryPort(Protocol):
+    """Historique quotidien de l'occupation des sauvegardes (backlog
+    fiabilité n° 6). Écrit par StorageHistoryWatcher (observation passive,
+    comme ArchiveVerifier — pas de mutation via AdminService), lu par la
+    page /backups. Un point PAR JOUR : `record_today` remplace le point du
+    jour courant s'il existe déjà (plusieurs passes/jour = le dernier relevé
+    du jour gagne), l'historique des jours passés n'est jamais modifié."""
+
+    def record_today(self, snapshot: StorageSnapshot) -> None: ...
+    def history(self, days: int = 30) -> list[StorageSnapshot]: ...  # tri croissant par date
+
+
+class AlertThresholdsPort(Protocol):
+    """Seuils d'alerte de PerfWatcher (MSPT, espace disque, durée d'incident
+    avant alerte) — réglables dans l'UI (backlog fiabilité n° 4)."""
+
+    def get(self) -> AlertThresholds: ...
+    def set(self, thresholds: AlertThresholds) -> None: ...
 
 
 class ArchiveChecksPort(Protocol):

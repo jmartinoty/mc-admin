@@ -32,6 +32,7 @@ from config import (
     build_password_store,
     build_player_history,
     build_service,
+    build_storage_history_watcher,
     build_temp_bans,
     load_rbac,
     migrate_yaml_users,
@@ -90,6 +91,7 @@ def create_app(
     mod_update_checker=None,
     restore_coordinator=None,
     archive_verifier=None,
+    storage_history_watcher=None,
     login_limiter=None,
     client_ip_resolver=None,
     map_open=None,
@@ -161,6 +163,10 @@ def create_app(
         else RestoreCoordinator(built_service)
     )
     verifier = archive_verifier if archive_verifier is not None else build_archive_verifier(settings)
+    storage_history = (
+        storage_history_watcher if storage_history_watcher is not None
+        else build_storage_history_watcher(settings)
+    )
     background_tasks = (
         ("backup-scheduler", backup_scheduler),
         ("player-watcher", watcher),
@@ -169,6 +175,7 @@ def create_app(
         ("maintenance-scheduler", maintenance_sched),
         ("restore-coordinator", restore_coord),
         ("archive-verifier", verifier),
+        ("storage-history-watcher", storage_history),
         ("health-watcher", health),
         ("perf-watcher", perf),
         ("mod-update-checker", mod_checker),
@@ -214,6 +221,7 @@ def create_app(
     app.state.mod_update_checker = mod_checker
     app.state.restore_coordinator = restore_coord
     app.state.archive_verifier = verifier
+    app.state.storage_history_watcher = storage_history
     app.state.login_limiter = (
         login_limiter if login_limiter is not None else LoginAttemptLimiter()
     )

@@ -206,8 +206,9 @@ class ApiTestBase(unittest.TestCase):
             return 200, headers, iter((b"<html>FAKE MAP</html>",))
 
         self.fake_map_open = fake_map_open
-        from tests.fakes import FakeAppUpdater, FakeAppUpdateState, FakeSelfImage
+        from tests.fakes import FakeAppUpdater, FakeAppUpdateSnooze, FakeAppUpdateState, FakeSelfImage
         self.app_update_state = FakeAppUpdateState()
+        self.app_update_snooze = FakeAppUpdateSnooze()
         self.app_updater = FakeAppUpdater()
         self.self_image = FakeSelfImage()
         self.service = AdminService(
@@ -247,6 +248,7 @@ class ApiTestBase(unittest.TestCase):
             mod_checks=self.mod_checks,
             map_probe=self.map_probe,
             app_update_state=self.app_update_state,
+            app_update_snooze=self.app_update_snooze,
             app_updater=self.app_updater,
             self_image=self.self_image,
         )
@@ -1419,6 +1421,28 @@ class TestConsolePage(ApiTestBase):
         page = self.client.get("/").text
         self.assertNotIn('action="/actions/rcon"', page)
 
+    def test_owner_sees_terminal_pause_search_and_favorites_controls(self):
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/").text
+        self.assertIn('id="termPauseToggle"', page)          # pause du défilement
+        self.assertIn('id="termSearchCount"', page)           # compteur de résultats
+        self.assertIn('id="termFavStar"', page)                # favoris (RCON)
+        self.assertIn('id="termFavOpen"', page)
+        self.assertIn('id="termFavList"', page)
+
+    def test_viewer_without_console_does_not_see_favorites_controls(self):
+        # Les favoris vivent dans le formulaire RCON — absent sans la console.
+        self.login("sam", "friend-pw")
+        page = self.client.get("/").text
+        self.assertNotIn('id="termFavStar"', page)
+        self.assertNotIn('id="termFavOpen"', page)
+
+    def test_log_lines_carry_a_copy_button_and_text_span(self):
+        self.login("sam", "friend-pw")
+        frag = self.client.get("/fragment/status").text
+        self.assertIn('class="ln-text"', frag)
+        self.assertIn('class="ln-copy"', frag)
+
     def test_terminal_log_area_has_fixed_height(self):
         css_path = os.path.join(os.path.dirname(__file__), "..", "app", "api", "static", "style.css")
         with open(css_path, encoding="utf-8") as fh:
@@ -1711,15 +1735,23 @@ class TestBackupsPage(ApiTestBase):
         self.assertNotIn("/retention", page)                       # la rétention s'applique toute seule
         self.assertNotIn("confirm(", page)                         # jamais de confirm() natif ici
 
-    def test_profile_dialog_has_three_steps(self):
+    def test_profile_dialog_has_four_steps(self):
         self.login("jeremy", "owner-pw")
         page = self.client.get("/backups").text
         self.assertIn('id="profileDialog"', page)
         self.assertIn("1 · Quoi sauvegarder", page)
         self.assertIn("2 · Quand", page)
         self.assertIn("3 · Combien de temps conserver", page)
+        self.assertIn("4 · Destination", page)
         self.assertIn('name="include"', page)
         self.assertIn("Tout le serveur", page)
+
+    def test_profile_dialog_destination_step_only_local_is_selectable(self):
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/backups").text
+        self.assertIn('<input type="radio" name="destination" value="local" checked>', page)
+        self.assertIn('<input type="radio" name="destination" value="remote" disabled>', page)
+        self.assertIn("bientôt disponible", page)
 
     def test_admin_can_download_archive(self):
         fd, archive_path = tempfile.mkstemp(suffix=".tar.gz")
@@ -1763,6 +1795,36 @@ class TestBackupsPage(ApiTestBase):
     def test_status_page_no_longer_has_backup_button(self):
         self.login("paul", "admin-pw")
         self.assertNotIn("/actions/backup", self.client.get("/").text)
+
+    def test_no_storage_history_shows_honest_placeholder(self):
+        self.login("jeremy", "owner-pw")
+        self.assertIn("pas encore assez de jours suivis", self.client.get("/backups").text)
+
+    def test_storage_history_shows_families_and_saturation_projection(self):
+        from tests.fakes import FakeStorageHistory
+        from domain.model import StorageSnapshot
+        self.client.app.state.service._storage_history = FakeStorageHistory(snapshots=[
+            StorageSnapshot(date="2026-07-01", free_bytes=10_737_418_240,
+                            families={"manual": 1_073_741_824, "scheduled": 2_147_483_648}),
+            StorageSnapshot(date="2026-07-05", free_bytes=6_442_450_944,
+                            families={"manual": 1_073_741_824, "scheduled": 6_442_450_944}),
+        ])
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/backups").text
+        self.assertIn("storage-spark", page)
+        self.assertIn("Manuelles ·", page)
+        self.assertIn("Automatiques ·", page)
+        self.assertIn("le volume serait plein vers le", page)
+
+    def test_flat_storage_trend_says_no_saturation_predictable(self):
+        from tests.fakes import FakeStorageHistory
+        from domain.model import StorageSnapshot
+        self.client.app.state.service._storage_history = FakeStorageHistory(snapshots=[
+            StorageSnapshot(date="2026-07-01", free_bytes=1000, families={"manual": 100}),
+            StorageSnapshot(date="2026-07-05", free_bytes=1000, families={"manual": 100}),
+        ])
+        self.login("jeremy", "owner-pw")
+        self.assertIn("pas de saturation prévisible", self.client.get("/backups").text)
 
 
 class TestRetentionApplyAction(ApiTestBase):
@@ -2486,6 +2548,31 @@ class TestPerformancePage(ApiTestBase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Prometheus est injoignable", page.text)
 
+    def test_mspt_chart_shows_annotated_markers(self):
+        from datetime import datetime, timezone
+        from domain.model import AuditEntry
+        self.audit.entries.append(AuditEntry(
+            timestamp=datetime.now(timezone.utc), username="backup-watch", role="automation",
+            action="BACKUP_TRIGGER", target="minecraft", outcome="allowed",
+            detail="phase=backup_done kind=scheduled archive=x.tar.gz size_mio=5",
+        ))
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/performance").text
+        self.assertIn("perf-marker-backup", page)
+        self.assertIn("Sauvegarde ·", page)                        # infobulle SVG <title>
+
+    def test_mc_admin_self_update_is_not_annotated(self):
+        from datetime import datetime, timezone
+        from domain.model import AuditEntry
+        self.audit.entries.append(AuditEntry(
+            timestamp=datetime.now(timezone.utc), username="jeremy", role="owner",
+            action="UPDATE", target="minecraft", outcome="allowed",
+            detail="phase=app_update_applied version=0.10.0",
+        ))
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/performance").text
+        self.assertNotIn("perf-marker-update", page)
+
     def test_empty_top_has_honest_message(self):
         from domain.model import PerformanceSnapshot
         self.metrics.perf = PerformanceSnapshot(tps=20.0, mspt_mean=1.0)
@@ -2493,6 +2580,43 @@ class TestPerformancePage(ApiTestBase):
         page = self.client.get("/performance").text
         self.assertIn("Aucune entité chargée", page)
         self.assertIn("pas encore assez d", page.lower())          # courbe sans historique
+
+    def test_owner_sees_threshold_settings_form_with_current_values(self):
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/performance").text
+        self.assertIn('action="/actions/performance/thresholds"', page)
+        self.assertIn('name="mspt_threshold_ms"', page)
+        self.assertIn('value="50"', page)                          # défaut du domaine
+        self.assertIn("seuil à 50 millisecondes", page)             # aria-label suit le réglage
+
+    def test_admin_does_not_see_threshold_settings_form(self):
+        self.login("paul", "admin-pw")
+        self.assertNotIn('action="/actions/performance/thresholds"',
+                         self.client.get("/performance").text)
+
+    def test_owner_can_update_thresholds_and_it_reflects_on_the_page(self):
+        from tests.fakes import FakeAlertThresholds
+        self.client.app.state.service._alert_thresholds = FakeAlertThresholds()
+        self.login("jeremy", "owner-pw")
+        res = self.client.post("/actions/performance/thresholds", data={
+            "mspt_threshold_ms": "80", "disk_min_free_gib": "25",
+            "mspt_sustained_minutes": "5", "csrf_token": self.page_csrf(),
+        })
+        self.assertEqual(res.status_code, 303)
+        page = self.client.get("/performance").text
+        self.assertIn('value="80"', page)
+        self.assertIn("seuil à 80 millisecondes", page)
+        self.assertIn("phase=alert_thresholds_updated", self.audit.entries[-1].detail)
+
+    def test_invalid_threshold_shows_flash_error(self):
+        from tests.fakes import FakeAlertThresholds
+        self.client.app.state.service._alert_thresholds = FakeAlertThresholds()
+        self.login("jeremy", "owner-pw")
+        res = self.client.post("/actions/performance/thresholds", data={
+            "mspt_threshold_ms": "0", "disk_min_free_gib": "25",
+            "mspt_sustained_minutes": "5", "csrf_token": self.page_csrf(),
+        }, follow_redirects=True)
+        self.assertIn("PRF-03", res.text)
 
 
 @unittest.skipUnless(HAS_HTTP_STACK, "fastapi/httpx requis")
@@ -2710,9 +2834,12 @@ class TestServerMap(ApiTestBase):
         self.client.get("/map/embed/tile.png", headers={
             "If-None-Match": "fake-etag",
             "If-Modified-Since": "Sun, 19 Jul 2026 05:04:16 GMT"})
-        self.assertEqual(self.map_conditional, {
-            "if_none_match": "fake-etag",
-            "if_modified_since": "Sun, 19 Jul 2026 05:04:16 GMT"})
+        self.assertEqual(self.map_conditional["if_none_match"], "fake-etag")
+        self.assertEqual(self.map_conditional["if_modified_since"],
+                         "Sun, 19 Jul 2026 05:04:16 GMT")
+        # L'Accept-Encoding du navigateur suit aussi (compression de bout en
+        # bout — les tuiles hires BlueMap pèsent x15 sans gzip) :
+        self.assertIn("gzip", self.map_conditional["accept_encoding"])
 
     def test_embed_requires_configured_map_and_login(self):
         self.login("jeremy", "owner-pw")
@@ -2826,6 +2953,35 @@ class TestAppUpdate(ApiTestBase):
         self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
         self.assertEqual(self.app_updater.starts, 0)
         self.assertIn("MAJ-01", self.client.get("/").text)         # flash_error à code
+
+    def test_snooze_button_present_even_without_apply_button(self):
+        self._announce()
+        self.self_image.value = "mc-admin:latest"                  # build git : pas de bouton Appliquer
+        self.login("jeremy", "owner-pw")
+        self.assertIn('action="/actions/app-update/snooze"', self.client.get("/").text)
+
+    def test_snooze_hides_the_banner_for_that_version(self):
+        self._announce()
+        self.login("jeremy", "owner-pw")
+        self.assertIn("Mise à jour de mc-admin disponible", self.client.get("/").text)
+        res = self.client.post("/actions/app-update/snooze", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(res.status_code, 303)
+        self.assertNotIn("Mise à jour de mc-admin disponible", self.client.get("/").text)
+        self.assertIn("phase=app_update_snoozed version=" + self.NEWER_VERSION,
+                      self.audit.entries[-1].detail)
+
+    def test_snoozed_banner_reappears_for_a_newer_version(self):
+        self._announce()
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/app-update/snooze", data={"csrf_token": self.page_csrf()})
+        self.assertNotIn("Mise à jour de mc-admin disponible", self.client.get("/").text)
+        self._announce(version="0.100.0")                          # une nouveauté sort entre-temps
+        self.assertIn("Mise à jour de mc-admin disponible", self.client.get("/").text)
+
+    def test_snooze_without_verdict_shows_flash_error(self):
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/app-update/snooze", data={"csrf_token": self.page_csrf()})
+        self.assertIn("MAJ-02", self.client.get("/").text)
 
     def test_apply_refused_on_git_install(self):
         self._announce()

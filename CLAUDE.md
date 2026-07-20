@@ -102,6 +102,13 @@ Les propositions validées, leur périmètre et leurs critères d'acceptation so
 suivis dans [`docs/ux-roadmap.md`](docs/ux-roadmap.md). Mettre ce document à
 jour lorsqu'un lot UX est commencé, terminé ou volontairement reporté.
 
+### Patch notes
+
+Chaque correctif de bug (constaté par Jeremy ou en test réel) ajoute une
+entrée courte dans [`docs/patch-notes.md`](docs/patch-notes.md) : date,
+constat, cause/fix — que le correctif touche le code ou une config d'infra
+adjacente (ex. BlueMap). Distinct de `CHANGELOG.md` (releases semver).
+
 ## 1. Vue d'ensemble
 
 Service web **autonome et containerisé** pour administrer un serveur Minecraft

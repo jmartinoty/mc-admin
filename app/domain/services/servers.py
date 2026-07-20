@@ -9,8 +9,10 @@ import re
 
 from domain.errors import (
     InvalidGameValue,
+    ServerUnavailable,
 )
 from domain.model import (
+    AlertThresholds,
     ConnectionCheck,
     DetectedServer,
     Permission,
@@ -332,4 +334,27 @@ class ServersMixin:
                     "workers", "Outils one-shot", False,
                     "état des outils illisible via le proxy Docker"))
         return checks
+
+    def set_alert_thresholds(self, user: User, mspt_threshold_ms: float,
+                             disk_min_free_gib: float, mspt_sustained_minutes: float) -> None:
+        """Règle les seuils d'alerte de PerfWatcher (backlog fiabilité n° 4,
+        owner). Bornes larges mais réelles : un seuil à 0 ou négatif rendrait
+        le watcher inutile en silence plutôt que de lever une erreur."""
+        self._authorize(user, Permission.SERVER_MANAGE)
+        if self._alert_thresholds is None:
+            raise ServerUnavailable("seuils d'alerte non configurés côté serveur")
+        if not (0 < mspt_threshold_ms <= 1000):
+            raise InvalidGameValue(f"seuil MSPT invalide : {mspt_threshold_ms}")
+        if not (0 < disk_min_free_gib <= 100_000):
+            raise InvalidGameValue(f"seuil disque invalide : {disk_min_free_gib}")
+        if not (0 < mspt_sustained_minutes <= 120):
+            raise InvalidGameValue(f"durée invalide : {mspt_sustained_minutes}")
+        self._alert_thresholds.set(AlertThresholds(
+            mspt_threshold_ms=mspt_threshold_ms,
+            disk_min_free_gib=disk_min_free_gib,
+            mspt_sustained_minutes=mspt_sustained_minutes,
+        ))
+        self._record(user, Permission.SERVER_MANAGE, "allowed",
+                     f"phase=alert_thresholds_updated mspt_ms={mspt_threshold_ms} "
+                     f"disk_gib={disk_min_free_gib} mspt_minutes={mspt_sustained_minutes}")
 

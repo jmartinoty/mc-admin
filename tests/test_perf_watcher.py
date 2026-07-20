@@ -27,6 +27,76 @@ class ArchivesStub:
         return self.free
 
 
+class FakeThresholds:
+    def __init__(self, thresholds):
+        self._thresholds = thresholds
+
+    def get(self):
+        return self._thresholds
+
+    def set(self, thresholds):
+        self._thresholds = thresholds
+
+
+class TestPerfWatcherConfigurableThresholds(unittest.TestCase):
+    """Seuils réglables dans l'UI (backlog fiabilité n° 4) — relus à chaque
+    passe, sans redémarrer mc-admin."""
+
+    def test_custom_mspt_threshold_is_honoured(self):
+        from domain.model import AlertThresholds
+        metrics = MetricsStub(mspt=120.0)
+        archives = ArchivesStub()
+        notifier = FakeNotifier()
+        thresholds = FakeThresholds(AlertThresholds(
+            mspt_threshold_ms=150.0, disk_min_free_gib=10.0, mspt_sustained_minutes=1.0))
+        watcher = PerfWatcher(metrics, archives, notifier, poll_seconds=60,
+                              mspt_polls_before_alert=1, thresholds=thresholds)
+        watcher._tick()
+        self.assertEqual(notifier.sent, [])  # 120 ms < seuil réglé à 150 ms
+
+    def test_custom_disk_threshold_is_honoured(self):
+        from domain.model import AlertThresholds
+        metrics = MetricsStub()
+        archives = ArchivesStub(free=15 * 1024**3)
+        notifier = FakeNotifier()
+        thresholds = FakeThresholds(AlertThresholds(
+            mspt_threshold_ms=50.0, disk_min_free_gib=20.0, mspt_sustained_minutes=3.0))
+        watcher = PerfWatcher(metrics, archives, notifier, poll_seconds=60,
+                              thresholds=thresholds)
+        watcher._tick()
+        self.assertEqual(notifier.sent[0][0], "Espace disque bas")
+        self.assertIn("seuil : 20 Gio", notifier.sent[0][1])
+
+    def test_sustained_minutes_converted_to_poll_count(self):
+        from domain.model import AlertThresholds
+        metrics = MetricsStub(mspt=75.0)
+        archives = ArchivesStub()
+        notifier = FakeNotifier()
+        # 2 minutes / 60 s de poll = 2 sondes avant alerte (pas 3, le défaut).
+        thresholds = FakeThresholds(AlertThresholds(
+            mspt_threshold_ms=50.0, disk_min_free_gib=10.0, mspt_sustained_minutes=2.0))
+        watcher = PerfWatcher(metrics, archives, notifier, poll_seconds=60,
+                              thresholds=thresholds)
+        watcher._tick()
+        self.assertEqual(notifier.sent, [])
+        watcher._tick()
+        self.assertEqual([t for t, *_ in notifier.sent], ["Lag serveur"])
+
+    def test_unreadable_config_falls_back_to_defaults(self):
+        class BrokenThresholds:
+            def get(self):
+                raise RuntimeError("fichier illisible")
+
+        metrics = MetricsStub(mspt=75.0)
+        archives = ArchivesStub()
+        notifier = FakeNotifier()
+        watcher = PerfWatcher(metrics, archives, notifier, poll_seconds=60,
+                              mspt_polls_before_alert=3, thresholds=BrokenThresholds())
+        for _ in range(3):
+            watcher._tick()
+        self.assertEqual([t for t, *_ in notifier.sent], ["Lag serveur"])  # défauts, pas de crash
+
+
 class TestPerfWatcher(unittest.TestCase):
     def setUp(self):
         self.metrics = MetricsStub()

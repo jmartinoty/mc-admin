@@ -14,7 +14,7 @@ import yaml
 from domain.rbac import build_roles, build_users
 
 # Version affichée dans l'UI et attendue par le tag git de release (vX.Y.Z).
-APP_VERSION = "0.10.0"
+APP_VERSION = "0.10.1"
 # Dépôt public — source des releases pour le bouton MAJ.
 APP_REPO = "jmartinoty/mc-admin"
 
@@ -80,6 +80,7 @@ class Settings:
     notification_config_file: str = "/data/notifications.json"
     mod_checks_file: str = "/data/mod_checks.json"
     app_update_file: str = "/data/app_update.json"
+    app_update_snooze_file: str = "/data/app_update_snooze.json"  # « me le rappeler plus tard »
     app_updater_container: str = "mc-admin-updater"
     spark_dir: str = ""  # profils spark (RO) ; vide = carte absente
     pending_op_levels_file: str = "/data/pending_op_levels.json"
@@ -87,6 +88,9 @@ class Settings:
     # Vide = les en-têtes X-Forwarded-For sont ignorés. N'ajouter ici que les
     # CIDR des reverse proxies directement connectés à mc-admin.
     login_trusted_proxy_cidrs: str = ""
+    storage_history_file: str = "/data/storage_history.json"  # occupation quotidienne des sauvegardes
+    storage_history_poll_seconds: float = 3600.0
+    alert_thresholds_file: str = "/data/alert_thresholds.json"  # seuils PerfWatcher réglables (UI)
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "Settings":
@@ -152,6 +156,9 @@ class Settings:
             notification_config_file=env.get("NOTIFICATION_CONFIG_FILE", "/data/notifications.json"),
             mod_checks_file=env.get("MOD_CHECKS_FILE", "/data/mod_checks.json"),
             app_update_file=env.get("APP_UPDATE_FILE", "/data/app_update.json"),
+            app_update_snooze_file=env.get(
+                "APP_UPDATE_SNOOZE_FILE", "/data/app_update_snooze.json"
+            ),
             app_updater_container=env.get("APP_UPDATER_CONTAINER", "mc-admin-updater"),
             spark_dir=env.get("MC_SPARK_DIR", ""),
             pending_op_levels_file=env.get(
@@ -160,6 +167,9 @@ class Settings:
             ),
             mc_op_levels_container=env.get("MC_OP_LEVELS_CONTAINER", ""),
             login_trusted_proxy_cidrs=env.get("LOGIN_TRUSTED_PROXY_CIDRS", ""),
+            storage_history_file=env.get("STORAGE_HISTORY_FILE", "/data/storage_history.json"),
+            storage_history_poll_seconds=float(env.get("STORAGE_HISTORY_POLL_SECONDS", "3600")),
+            alert_thresholds_file=env.get("ALERT_THRESHOLDS_FILE", "/data/alert_thresholds.json"),
         )
 
 
@@ -367,7 +377,11 @@ def build_health_watcher(settings: Settings):
 
 def build_perf_watcher(settings: Settings):
     """PerfWatcher (MSPT soutenu + disque bas) — comme le HealthWatcher :
-    toujours actif, ce sont les interrupteurs par canal qui filtrent."""
+    toujours actif, ce sont les interrupteurs par canal qui filtrent. Seuils
+    réglables (backlog fiabilité n° 4) : instance AlertThresholdsPort SÉPARÉE
+    de celle du service (le watcher relit, le service écrit — même politique
+    que StoreBackedNotifier avec notifications.json)."""
+    from adapters.alert_thresholds import JsonAlertThresholds
     from adapters.backup_archives import FileBackupArchives
     from adapters.prometheus import PrometheusMetrics
     from perf_watcher import PerfWatcher
@@ -376,6 +390,7 @@ def build_perf_watcher(settings: Settings):
         PrometheusMetrics(settings.prometheus_url, []),
         FileBackupArchives(settings.backup_archives_dir),
         build_notifications(settings),
+        thresholds=JsonAlertThresholds(settings.alert_thresholds_file),
     )
 
 
@@ -439,6 +454,20 @@ def build_archive_verifier(settings: Settings):
     )
 
 
+def build_storage_history_watcher(settings: Settings):
+    """Historique de stockage (thread de fond, backlog fiabilité n° 6).
+    Instance d'adapters SÉPARÉE de celle du service (même politique que
+    build_archive_verifier) : le watcher écrit, le service lit."""
+    from adapters.backup_archives import FileBackupArchives
+    from adapters.storage_history import JsonStorageHistory
+    from storage_history_watcher import StorageHistoryWatcher
+    return StorageHistoryWatcher(
+        FileBackupArchives(settings.backup_archives_dir),
+        JsonStorageHistory(settings.storage_history_file),
+        poll_seconds=settings.storage_history_poll_seconds,
+    )
+
+
 def build_service(settings: Settings):
     """Assemble l'AdminService avec les adapters concrets (appelé au démarrage).
 
@@ -483,6 +512,8 @@ def build_service(settings: Settings):
     backup_archives = FileBackupArchives(settings.backup_archives_dir)
 
     from adapters.archive_checks import JsonArchiveChecks
+    from adapters.alert_thresholds import JsonAlertThresholds
+    from adapters.storage_history import JsonStorageHistory
     from adapters.backup_profiles import JsonBackupProfiles
     from adapters.mod_checks import JsonModChecks
     from adapters.mods import FileMods
@@ -591,6 +622,8 @@ def build_service(settings: Settings):
         archive_checks=JsonArchiveChecks(settings.archive_checks_file),
         archive_validator=FileArchiveValidator(backup_archives),
         worker_integrity=worker_integrity,
+        storage_history=JsonStorageHistory(settings.storage_history_file),
+        alert_thresholds=JsonAlertThresholds(settings.alert_thresholds_file),
         backup_profiles=backup_profiles,
         profile_backup=profile_backup,
         world_dir=settings.world_dir,
@@ -603,6 +636,7 @@ def build_service(settings: Settings):
         companion_port_factory=DockerProxyContainer,
         map_probe=__import__("adapters.map_fetch", fromlist=["MapProbe"]).MapProbe(),
         app_update_state=__import__("adapters.app_update", fromlist=["JsonAppUpdate"]).JsonAppUpdate(settings.app_update_file),
+        app_update_snooze=__import__("adapters.app_update", fromlist=["JsonAppUpdateSnooze"]).JsonAppUpdateSnooze(settings.app_update_snooze_file),
         app_updater=__import__("adapters.app_update", fromlist=["DockerAppUpdater"]).DockerAppUpdater(settings.app_updater_container),
         self_image=__import__("adapters.app_update", fromlist=["DockerSelfImage"]).DockerSelfImage(),
     )

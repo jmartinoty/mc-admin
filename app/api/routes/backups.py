@@ -27,6 +27,13 @@ router = APIRouter()
 # chip « historique ».
 _FIXED_TYPES = {"all": "Toutes", "safety": "Sécurité"}
 
+# Libellés FR des familles de l'historique de stockage (backlog fiabilité
+# n° 6) — premier segment du chemin de l'archive, cf. storage_history_watcher.
+_STORAGE_FAMILY_LABELS = {
+    "manual": "Manuelles", "scheduled": "Automatiques", "profiles": "Profils",
+    "restore-safety": "Sécurité (restauration)", "legacy": "Historique",
+}
+
 _MONTHS_FR = (
     "",
     "janvier",
@@ -179,6 +186,12 @@ def backups_page(request: Request):
         ctx["archive_checking"] = request.app.state.service.archive_checking(user)
         ctx["backup_total_bytes"] = sum(a.size_bytes for a in archives)
         ctx["backup_free_bytes"] = request.app.state.service.backup_free_bytes(user)
+        history, saturation = request.app.state.service.storage_overview(user)
+        ctx["storage_total_series"] = [sum(p.families.values()) for p in history]
+        ctx["storage_saturation"] = saturation
+        ctx["storage_families"] = dict(history[-1].families) if history else {}
+        ctx["storage_family_labels"] = _STORAGE_FAMILY_LABELS
+        ctx["storage_days_tracked"] = len(history)
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     ctx["profile_categories"] = _PROFILE_CATEGORY_LABELS

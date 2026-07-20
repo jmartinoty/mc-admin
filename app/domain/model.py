@@ -116,6 +116,19 @@ class BackupArchive:
 
 
 @dataclass(frozen=True)
+class StorageSnapshot:
+    """Un point d'historique de stockage (page /backups) : occupation par
+    famille (manual/scheduled/profiles/restore-safety/legacy — premier
+    segment du chemin de l'archive, PAS un dossier par profil individuel :
+    stable même si des profils sont ajoutés/supprimés) + espace libre du
+    volume, UN point par jour calendaire (le dernier relevé du jour gagne)."""
+
+    date: str  # "AAAA-MM-JJ", jour calendaire local
+    free_bytes: int | None
+    families: dict[str, int]
+
+
+@dataclass(frozen=True)
 class BackupProgress:
     """Suivi best-effort d'une sauvegarde en cours."""
 
@@ -266,6 +279,19 @@ class MaintenanceStatus:
     active: bool
     pending: PendingMaintenance | None = None
     motd: str = ""
+
+
+@dataclass(frozen=True)
+class AlertThresholds:
+    """Seuils d'alerte de PerfWatcher, réglables dans l'UI (backlog
+    fiabilité n° 4) — mêmes défauts que le comportement historique câblé en
+    dur. `get()` du port retourne TOUJOURS un objet concret (ces défauts si
+    jamais réglé) : contrairement à un redémarrage récurrent, il n'y a pas
+    d'état « désactivé »."""
+
+    mspt_threshold_ms: float = 50.0
+    disk_min_free_gib: float = 10.0
+    mspt_sustained_minutes: float = 3.0
 
 
 @dataclass(frozen=True)
@@ -494,6 +520,17 @@ class AppUpdateStatus:
     checked_at: datetime | None
     can_apply: bool
     reason: str = ""
+    snoozed: bool = False  # « me le rappeler plus tard » actif pour CETTE version
+
+
+@dataclass(frozen=True)
+class AppUpdateSnooze:
+    """Report du bandeau MAJ (« me le rappeler plus tard ») — propre à une
+    version précise : si une version PLUS RÉCENTE sort entre-temps, le
+    report ne s'applique plus (jamais silencer une vraie nouveauté)."""
+
+    version: str
+    until: datetime
 
 
 @dataclass(frozen=True)

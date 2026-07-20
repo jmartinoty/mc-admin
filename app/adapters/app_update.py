@@ -21,7 +21,7 @@ from datetime import datetime
 from adapters.atomic_json import atomic_write_json, load_json, shared_path_lock
 from adapters.docker_proxy import ensure_authorized
 from domain.errors import UnauthorizedContainer, UpdateUnavailable
-from domain.model import AppRelease
+from domain.model import AppRelease, AppUpdateSnooze
 
 # Le corps des notes est borné : la carte n'affiche qu'un résumé, et le
 # fichier de verdict ne doit pas grossir avec des notes fleuves.
@@ -87,6 +87,32 @@ class JsonAppUpdate:
                 "notes": release.notes,
                 "url": release.url,
                 "checked_at": checked_at.isoformat(),
+            }, ensure_ascii=False, indent=2)
+
+
+class JsonAppUpdateSnooze:
+    """AppUpdateSnoozePort — « me le rappeler plus tard », écritures atomiques."""
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self._lock = shared_path_lock(path)
+
+    def get(self) -> AppUpdateSnooze | None:
+        data = load_json(self._path, expected_type=dict, default_factory=dict)
+        version = data.get("version")
+        until = data.get("until")
+        if not isinstance(version, str) or not version or not isinstance(until, str):
+            return None
+        try:
+            return AppUpdateSnooze(version=version, until=datetime.fromisoformat(until))
+        except ValueError:
+            return None
+
+    def set(self, snooze: AppUpdateSnooze) -> None:
+        with self._lock:
+            atomic_write_json(self._path, {
+                "version": snooze.version,
+                "until": snooze.until.isoformat(),
             }, ensure_ascii=False, indent=2)
 
 

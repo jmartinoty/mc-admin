@@ -35,29 +35,56 @@
 </section>
 {% endif %}
 {% if app_update %}
-<section class="card app-update-card">
-  <div class="app-update-head">
-    <h2>Mise à jour de mc-admin disponible
-      <span class="badge ko">v{{ app_update.latest.version }}</span>
-      <span class="muted">— tu utilises la v{{ app_update.current_version }}</span>
-    </h2>
-    {% if app_update.latest.url %}
-    <a class="muted" href="{{ app_update.latest.url }}" target="_blank" rel="noopener">notes de version ↗</a>
+{# Bandeau COMPACT (retour Jeremy 20/07 : la carte prenait trop de place) —
+   tout le contenu (notes, lien, action) vit dans le dialogue « Voir le
+   détail ». #}
+<div class="app-update-banner">
+  <p>
+    <strong>Mise à jour de mc-admin disponible</strong>
+    <span class="badge ko">v{{ app_update.latest.version }}</span>
+    <span class="muted">— tu utilises la v{{ app_update.current_version }}</span>
+  </p>
+  <button type="button" class="small" id="appUpdateOpen">Voir le détail</button>
+</div>
+<dialog class="player-dialog app-update-dialog" id="appUpdateDialog"
+        aria-labelledby="appUpdateTitle">
+  <div class="player-dialog-box">
+    <h2 id="appUpdateTitle">mc-admin v{{ app_update.latest.version }}
+      <span class="muted">— tu utilises la v{{ app_update.current_version }}</span></h2>
+    {% if app_update.latest.notes %}
+    <div class="app-update-notes">{{ app_update.latest.notes }}</div>
     {% endif %}
+    {% if app_update.latest.url %}
+    <p><a class="muted" href="{{ app_update.latest.url }}" target="_blank" rel="noopener">notes de version complètes ↗</a></p>
+    {% endif %}
+    {% if not app_update.can_apply %}
+    <p class="muted">{{ app_update.reason }}</p>
+    {% endif %}
+    <div class="dialog-actions">
+      <button type="button" class="txtbtn" id="appUpdateClose">Fermer</button>
+      <form method="post" action="/actions/app-update/snooze" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="txtbtn">Me le rappeler plus tard</button>
+      </form>
+      {% if app_update.can_apply %}
+      <form method="post" action="/actions/app-update" class="inline js-confirm-form"
+            data-confirm="Mettre à jour mc-admin vers la v{{ app_update.latest.version }} ? L'application redémarre (le serveur Minecraft n'est pas touché).">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="small">Appliquer la mise à jour</button>
+      </form>
+      {% endif %}
+    </div>
   </div>
-  {% if app_update.latest.notes %}
-  <p class="muted app-update-notes">{{ app_update.latest.notes | truncate(280) }}</p>
-  {% endif %}
-  {% if app_update.can_apply %}
-  <form method="post" action="/actions/app-update" class="inline js-confirm-form"
-        data-confirm="Mettre à jour mc-admin vers la v{{ app_update.latest.version }} ? L'application redémarre (le serveur Minecraft n'est pas touché).">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button class="small">Appliquer la mise à jour</button>
-  </form>
-  {% else %}
-  <p class="muted">{{ app_update.reason }}</p>
-  {% endif %}
-</section>
+</dialog>
+<script>
+(function () {
+  var dialog = document.getElementById("appUpdateDialog");
+  var open = document.getElementById("appUpdateOpen");
+  var close = document.getElementById("appUpdateClose");
+  if (dialog && open) open.addEventListener("click", function () { dialog.showModal(); });
+  if (dialog && close) close.addEventListener("click", function () { dialog.close(); });
+})();
+</script>
 {% endif %}
 {% if status is none %}
 <section class="card server-card" data-dashboard-mode="{{ dashboard_mode }}">
@@ -292,10 +319,12 @@
 <div class="term{% if can_console %} term-open{% endif %}">
   <div class="term-head">
     <span class="k">terminal · latest.log{% if can_console %} + console rcon{% endif %}</span>
-    <span class="rec"><i></i>live</span>
+    <button type="button" class="txtbtn term-pause" id="termPauseToggle" aria-pressed="false">⏸ pause</button>
+    <span class="rec" id="termRec"><i></i>live</span>
   </div>
   <div class="term-filter term-filter-in">
-    <input id="termFilterText" placeholder="filtrer les logs…" autocomplete="off" aria-label="filtrer les logs">
+    <input id="termFilterText" placeholder="rechercher dans les logs…" autocomplete="off" aria-label="rechercher dans les logs">
+    <span class="muted term-search-count" id="termSearchCount"></span>
     <div class="term-filter-lvls" id="termFilterLvls">
       <button type="button" data-lvl="all" class="on">tous</button>
       <button type="button" data-lvl="info">info</button>
@@ -323,11 +352,16 @@
   <form method="post" action="/actions/rcon" class="term-prompt">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <span class="pfx">mc&nbsp;›</span>
-    <input name="command" placeholder="commande RCON — / pour focus, ↑↓ historique"
+    <input name="command" id="termCmdInput" placeholder="commande RCON — / pour focus, ↑↓ historique, ★ favoris"
            required autocomplete="off" aria-label="commande RCON"
            title="Astuce : / pour focus le terminal · Échap pour en sortir · ↑↓ pour rappeler les commandes">
+    <button type="button" class="term-fav-star" id="termFavStar"
+            title="Ajouter/retirer des favoris" aria-label="Ajouter aux favoris">☆</button>
+    <button type="button" class="term-fav-open" id="termFavOpen"
+            title="Commandes favorites" aria-label="Commandes favorites">favoris</button>
     <button class="term-send">envoyer</button>
   </form>
+  <div class="term-favs" id="termFavList" hidden></div>
   {% endif %}
 </div>
 {% endif %}
@@ -395,7 +429,7 @@
 {% endif %}
 {% endblock %}
 
-{% block page_scripts %}<script src="/static/app.js?v=20260704-terminal"></script>
+{% block page_scripts %}<script src="/static/app.js?v=20260720-term2"></script>
 <script>
 (function () {
   // UI-3 : signes vitaux vivants — pastille/uptime + Infrastructure toutes
