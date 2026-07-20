@@ -1,5 +1,64 @@
 {% extends "shell.html" %}
 {% block page %}
+{# Maintenance — le bandeau est visible de TOUS (savoir que le serveur est
+   volontairement fermé est une information, pas un privilège) ; seuls les
+   boutons dépendent de la permission. #}
+{% if maintenance and maintenance.active %}
+<section class="card maintenance-card">
+  <div class="st-name">
+    <h2>🔧 Serveur en maintenance</h2>
+    <span class="pill warn"><span class="led"></span>fermé</span>
+  </div>
+  <p class="muted">Le serveur est arrêté volontairement. Les joueurs qui le
+    cherchent dans leur liste voient un message d'attente au lieu d'une erreur.</p>
+  {% if can_maintenance %}
+  <form method="post" action="/actions/maintenance/end" class="js-confirm-form"
+        data-confirm="Rouvrir le serveur ? Le portier est relevé, puis Minecraft redémarre (quelques minutes avant qu'il accepte les joueurs).">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="small">Rouvrir le serveur</button>
+  </form>
+  {% endif %}
+</section>
+{% elif maintenance and maintenance.pending %}
+<section class="card maintenance-card">
+  <div class="st-name">
+    <h2>🔧 Fermeture pour maintenance annoncée</h2>
+    <span class="pill warn"><span class="led"></span>à {{ maintenance.pending.engage_at.astimezone().strftime('%H:%M') }}</span>
+  </div>
+  <p class="muted">Les joueurs connectés sont prévenus dans le jeu jusqu'à la fermeture.</p>
+  {% if can_maintenance %}
+  <form method="post" action="/actions/maintenance/cancel">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="small">Annuler la fermeture</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+{% if app_update %}
+<section class="card app-update-card">
+  <div class="app-update-head">
+    <h2>Mise à jour de mc-admin disponible
+      <span class="badge ko">v{{ app_update.latest.version }}</span>
+      <span class="muted">— tu utilises la v{{ app_update.current_version }}</span>
+    </h2>
+    {% if app_update.latest.url %}
+    <a class="muted" href="{{ app_update.latest.url }}" target="_blank" rel="noopener">notes de version ↗</a>
+    {% endif %}
+  </div>
+  {% if app_update.latest.notes %}
+  <p class="muted app-update-notes">{{ app_update.latest.notes | truncate(280) }}</p>
+  {% endif %}
+  {% if app_update.can_apply %}
+  <form method="post" action="/actions/app-update" class="inline js-confirm-form"
+        data-confirm="Mettre à jour mc-admin vers la v{{ app_update.latest.version }} ? L'application redémarre (le serveur Minecraft n'est pas touché).">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="small">Appliquer la mise à jour</button>
+  </form>
+  {% else %}
+  <p class="muted">{{ app_update.reason }}</p>
+  {% endif %}
+</section>
+{% endif %}
 {% if status is none %}
 <section class="card server-card" data-dashboard-mode="{{ dashboard_mode }}">
   <div class="st-name">
@@ -114,6 +173,34 @@
   {% elif metrics is none %}
   <p class="muted metrics-missing">Métriques indisponibles (Prometheus injoignable).</p>
   {% endif %}
+</section>
+{% endif %}
+
+{# Fermer le serveur proprement : replié par défaut, ce n'est pas un geste
+   quotidien. Absent tant qu'une maintenance est déjà en cours ou annoncée
+   (le bandeau du haut porte alors les boutons utiles). #}
+{% if can_maintenance and maintenance and not maintenance.active and not maintenance.pending %}
+<section class="card maintenance-setup">
+  <details>
+    <summary><h2 style="display:inline">Fermer pour maintenance</h2></summary>
+    <p class="muted">Arrête le serveur et laisse un portier répondre à sa place :
+      les joueurs voient un message d'attente dans leur liste de serveurs au lieu
+      d'une erreur de connexion.</p>
+    <form method="post" action="/actions/maintenance" class="js-confirm-form"
+          data-confirm="Fermer le serveur pour maintenance ? Les joueurs connectés seront déconnectés à la fermeture.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Message affiché aux joueurs
+        <input type="text" name="message" maxlength="120" placeholder="Migration du monde">
+      </label>
+      <label>Retour prévu <span class="muted">(facultatif)</span>
+        <input type="text" name="until" maxlength="40" placeholder="14h30">
+      </label>
+      <label>Délai avant fermeture <span class="muted">(minutes, 0 = tout de suite)</span>
+        <input type="number" name="grace_minutes" min="0" max="120" step="1" value="5">
+      </label>
+      <button class="small">Fermer le serveur</button>
+    </form>
+  </details>
 </section>
 {% endif %}
 

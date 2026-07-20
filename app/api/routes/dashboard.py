@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+import urllib.parse
 
+from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+
+from adapters.map_fetch import MapUnreachable
 from api.routes.common import _csrf, _current, _nav_context, _redirect_target, _require_csrf, flash_error, templates
+from config import APP_VERSION
 from domain.errors import DomainError, PermissionDenied
 from domain.model import Permission
 
@@ -67,8 +71,14 @@ def _status_context(request: Request, user) -> dict:
         server_address = svc.server_address(user)
     except DomainError:
         server_address = ""
+    try:
+        maintenance = svc.maintenance_status(user)
+    except DomainError:
+        maintenance = None  # jamais de 500 : le bandeau disparaît, c'est tout
     return {
         "server_address": server_address,
+        "maintenance": maintenance,
+        "can_maintenance": user.can(Permission.MAINTENANCE),
         "metrics": metrics,
         "status": status,
         "game_state": _game_state(status),
@@ -151,12 +161,46 @@ def index(request: Request):
             ctx["game"] = None  # RCON injoignable -> carte « indisponible »
     ctx["can_update"] = user.can(Permission.UPDATE)
     ctx["update"] = None
+    ctx["app_update"] = None
     if ctx["can_update"]:
         try:
             ctx["update"] = request.app.state.service.update_status(user)
         except DomainError:
             ctx["update"] = None
+        try:
+            status = request.app.state.service.app_update_status(user, APP_VERSION)
+            ctx["app_update"] = status if status.update_available else None
+        except DomainError:
+            ctx["app_update"] = None
     return templates.TemplateResponse(request, "status.html", ctx)
+
+
+@router.post("/actions/app-update")
+def action_app_update(request: Request, csrf_token: str = Form(...)):
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        request.app.state.service.apply_app_update(user)
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except DomainError as exc:
+        flash_error(request, "La mise à jour de mc-admin n'a pas pu être lancée",
+                    code="MAJ-01", details=str(exc))
+        return RedirectResponse("/", status_code=303)
+    return RedirectResponse("/updating", status_code=303)
+
+
+@router.get("/updating")
+def updating_page(request: Request):
+    """Page d'attente pendant que l'updater recrée mc-admin : sonde /healthz
+    et revient à l'accueil quand l'application répond de nouveau."""
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "updating.html",
+                                      {"csrf_token": _csrf(request)})
 
 
 # --- console RCON live (owner : RCON_RAW, aucune restriction supplémentaire —
@@ -326,6 +370,72 @@ def action_stop(request: Request, csrf_token: str = Form(...)):
     return RedirectResponse("/", status_code=303)
 
 
+# --- mode maintenance (owner : MAINTENANCE, garde-fous dans le service) ---
+
+@router.post("/actions/maintenance")
+def action_enter_maintenance(
+    request: Request,
+    message: str = Form(""),
+    until: str = Form(""),
+    grace_minutes: str = Form(""),
+    csrf_token: str = Form(...),
+):
+    """Ferme le serveur derrière le portier. Délai vide ou <= 0 = tout de
+    suite ; sinon les joueurs sont prévenus puis le compte à rebours ferme."""
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        grace = float(grace_minutes) if grace_minutes.strip() else 0.0
+        request.app.state.service.enter_maintenance(
+            user, message=message, until=until, grace_minutes=grace
+        )
+        request.session["flash"] = (
+            f"Fermeture pour maintenance dans {grace:g} minute(s)." if grace > 0
+            else "Le serveur est en maintenance."
+        )
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (DomainError, ValueError) as exc:
+        flash_error(request, "La mise en maintenance a échoué", code="SRV-06", details=str(exc))
+    return RedirectResponse("/", status_code=303)
+
+
+@router.post("/actions/maintenance/cancel")
+def action_cancel_maintenance(request: Request, csrf_token: str = Form(...)):
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        request.app.state.service.cancel_pending_maintenance(user)
+        request.session["flash"] = "Fermeture annulée : le serveur reste ouvert."
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except DomainError as exc:
+        flash_error(request, "L'annulation a échoué", code="SRV-07", details=str(exc))
+    return RedirectResponse("/", status_code=303)
+
+
+@router.post("/actions/maintenance/end")
+def action_exit_maintenance(request: Request, csrf_token: str = Form(...)):
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        request.app.state.service.exit_maintenance(user)
+        request.session["flash"] = "Maintenance terminée : le serveur redémarre."
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except DomainError as exc:
+        # Cas le plus utile à expliquer : le portier tient encore l'adresse,
+        # redémarrer maintenant échouerait sur un conflit d'IP.
+        flash_error(request, "La réouverture a échoué", code="SRV-08", details=str(exc))
+    return RedirectResponse("/", status_code=303)
+
+
 # --- mise à jour contrôlée (owner : UPDATE, garde-fous dans le service) ---
 
 @router.post("/actions/update")
@@ -423,28 +533,85 @@ def map_page(request: Request):
     if user is None:
         return RedirectResponse("/login", status_code=303)
     ctx = _nav_context(request, user, "map")
-    if not ctx["map_url"]:
-        # Pas de carte configurée : l'entrée sidebar n'existe pas non plus.
+    if not ctx["map_url"] and not user.can(Permission.SERVER_MANAGE):
+        # Pas de carte configurée : seul l'owner voit l'assistant.
         return RedirectResponse("/", status_code=303)
+    svc = request.app.state.service
+    if user.can(Permission.SERVER_MANAGE):
+        servers = svc.servers_list(user)
+        first = servers[0] if servers else None
+        ctx["map_server_id"] = first.id if first else ""
+        ctx["map_suggested"] = (f"http://{first.rcon_host}:8100"
+                                if first and first.rcon_host else "http://minecraft:8100")
+        ctx["map_draft"] = request.query_params.get("draft", "")
+        try:
+            mods = svc.mods_list(user)
+            ctx["map_mod_detected"] = next(
+                (m.name or m.filename for m in mods
+                 if any(k in (m.name or m.filename).lower() for k in ("bluemap", "dynmap", "squaremap"))),
+                "")
+        except DomainError:
+            ctx["map_mod_detected"] = ""
     return templates.TemplateResponse(request, "map.html", ctx)
 
 
-@router.post("/actions/servers/{server_id}/map")
-def action_server_map(request: Request, server_id: str,
-                      map_url: str = Form(""), csrf_token: str = Form(...)):
+@router.get("/map/embed")
+@router.get("/map/embed/{path:path}")
+def map_embed(request: Request, path: str = ""):
+    """Relais borné de la carte : le navigateur ne voit que l'origine de
+    mc-admin (HTTPS partout, adresse d'origine jamais exposée — anti-SSRF
+    et normalisation du chemin dans adapters/map_fetch)."""
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        base = request.app.state.service.server_map_url(user)  # barrière STATUS
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if not base:
+        raise HTTPException(status_code=404, detail="aucune carte configurée")
+    try:
+        status, headers, chunks = request.app.state.map_open(
+            base, path, request.url.query,
+            if_none_match=request.headers.get("if-none-match", ""),
+            if_modified_since=request.headers.get("if-modified-since", ""))
+    except MapUnreachable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    media_type = headers.pop("Content-Type", "application/octet-stream")
+    return StreamingResponse(chunks, status_code=status, media_type=media_type, headers=headers)
+
+
+@router.post("/actions/map/test")
+def action_map_test(request: Request, map_url: str = Form(""), csrf_token: str = Form(...)):
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        ok, detail = request.app.state.service.test_map_url(user, map_url)
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    request.session["flash"] = (f"Test réussi : {detail} — tu peux activer la carte."
+                                if ok else f"Test : {detail}")
+    return RedirectResponse(f"/map?draft={urllib.parse.quote(map_url.strip())}", status_code=303)
+
+
+@router.post("/actions/map")
+def action_map_save(request: Request, server_id: str = Form(...),
+                    map_url: str = Form(""), csrf_token: str = Form(...)):
     user = _current(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
     _require_csrf(request, csrf_token)
     try:
         request.app.state.service.set_server_map_url(user, server_id, map_url)
-        request.session["flash"] = ("Carte enregistrée — page « Carte » ajoutée au menu."
-                                    if map_url.strip() else "Carte effacée.")
+        request.session["flash"] = ("Carte activée — visible par tous les comptes."
+                                    if map_url.strip() else "Carte désactivée.")
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except DomainError as exc:
         flash_error(request, "La carte n'a pas pu être enregistrée", code="SRV-09", details=str(exc))
-    return RedirectResponse("/servers", status_code=303)
+    return RedirectResponse("/map", status_code=303)
 
 
 @router.post("/actions/servers/add")

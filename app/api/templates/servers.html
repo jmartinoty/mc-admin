@@ -23,13 +23,6 @@
     </label>
     <button class="small">Enregistrer</button>
   </form>
-  <form method="post" action="/actions/servers/{{ srv.id }}/map" class="inline addr-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Carte du monde <span class="info-tip" tabindex="0" aria-label="L'adresse web de la carte (BlueMap, Dynmap…). Ajoute une page « Carte » au menu, visible par tous les comptes.">?<span class="tip-body">L'adresse web de la carte (BlueMap, Dynmap…). Ajoute une page « Carte » au menu, visible par tous les comptes.</span></span>
-      <input name="map_url" value="{{ srv.map_url }}" placeholder="http://192.168.1.26:8100" autocomplete="off">
-    </label>
-    <button class="small">Enregistrer</button>
-  </form>
   {% if piloted %}
   <p class="muted storage-line">Branchements : {{ checks_ok }}/{{ checks | length }} opérationnels — testés à l'instant.</p>
   <ul class="checks">

@@ -41,6 +41,7 @@ from domain.ports import (
     BansPort,
     Clock,
     ContainerPort,
+    DoormanPort,
     GamePort,
     LogPort,
     MetricsPort,
@@ -49,6 +50,7 @@ from domain.ports import (
     NotificationPort,
     OpLevelsApplyPort,
     OpsPort,
+    PendingMaintenancePort,
     PendingOpLevelsPort,
     PendingRestorePort,
     ProfileBackupPort,
@@ -143,6 +145,8 @@ class ServiceCore:
         op_levels_apply: OpLevelsApplyPort | None = None,
         restore_safety_backup: BackupPort | None = None,
         restore: RestorePort | None = None,
+        doorman: DoormanPort | None = None,
+        pending_maintenance: PendingMaintenancePort | None = None,
         recurring_restart: RecurringRestartPort | None = None,
         pending_restore: PendingRestorePort | None = None,
         player_stats: PlayerStatsPort | None = None,
@@ -160,13 +164,23 @@ class ServiceCore:
         notification_config=None,
         mod_checks: ModChecksPort | None = None,
         spark=None,
+        map_probe=None,
+        app_update_state=None,
+        app_updater=None,
+        self_image=None,
     ) -> None:
         self._game = game
+        self._map_probe = map_probe
+        self._app_update_state = app_update_state
+        self._app_updater = app_updater
+        self._self_image = self_image
         self._container = container
         self._restore_safety_backup = (
             restore_safety_backup if restore_safety_backup is not None else _NoBackup()
         )
         self._restore = restore
+        self._doorman = doorman
+        self._pending_maintenance = pending_maintenance
         self._pending_restore = pending_restore
         self._player_stats = player_stats
         self._archive_checks = archive_checks

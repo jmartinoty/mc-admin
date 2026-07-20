@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .model import (
+    AppRelease,
     ArchiveCheck,
     AuditEntry,
     BackupProfile,
@@ -24,6 +25,7 @@ from .model import (
     ModInfo,
     ModUpdate,
     OpEntry,
+    PendingMaintenance,
     PendingOpLevel,
     PendingRestore,
     PendingUnban,
@@ -78,6 +80,42 @@ class ServersPort(Protocol):
     def set_map_url(self, server_id: str, map_url: str) -> bool: ...
 
 
+class MapProbePort(Protocol):
+    """Test EN DIRECT d'une adresse de carte web (assistant page Carte).
+    Contrat : ne lève jamais — verdict (ok, détail en langage utilisateur)."""
+
+    def probe(self, url: str) -> tuple[bool, str]: ...
+
+
+class AppReleaseCatalogPort(Protocol):
+    """Dernière release publiée de mc-admin (bouton MAJ).
+    Contrat : None sur toute erreur — le checker garde le dernier verdict."""
+
+    def latest(self) -> AppRelease | None: ...
+
+
+class AppUpdateStatePort(Protocol):
+    """Verdict persisté du checker de mise à jour (/data/app_update.json)."""
+
+    def get(self) -> tuple[AppRelease, datetime] | None: ...
+    def set(self, release: AppRelease, checked_at: datetime) -> None: ...
+
+
+class AppUpdaterPort(Protocol):
+    """Déclenche le one-shot privilégié `mc-admin-updater` (pull + recréation
+    de mc-admin ET des one-shots). Lève UpdateUnavailable si non démarrable."""
+
+    def start(self) -> None: ...
+
+
+class SelfImagePort(Protocol):
+    """Image du conteneur mc-admin COURANT (détection du mode d'installation :
+    image ghcr = bouton MAJ applicable, build git local = géré par le dépôt).
+    Contrat : chaîne vide si indéterminable."""
+
+    def image(self) -> str: ...
+
+
 class ServerDiscoveryPort(Protocol):
     """Détection des serveurs Minecraft existants (V6.3) — en mode Docker :
     conteneurs dont l'image/le port évoquent Minecraft, via le listage déjà
@@ -110,7 +148,11 @@ class ContainerPort(Protocol):
     def status(self) -> ContainerState: ...
     def restart(self) -> None: ...
     def start(self) -> None: ...
-    def stop(self) -> None: ...
+    # `timeout` = secondes laissées au serveur pour s'arrêter proprement avant
+    # le SIGKILL. Absent = valeur par défaut de l'implémentation. Mesuré au
+    # spike du 19/07/2026 : Minecraft demande bien plus que les 10 s par défaut
+    # de Docker pour sauvegarder ses mondes (arrêt de maintenance).
+    def stop(self, timeout: int | None = None) -> None: ...
 
 
 class BackupPort(Protocol):
@@ -205,6 +247,46 @@ class RestorePort(Protocol):
     def restore(self, archive_relpath: str) -> None: ...
     def is_running(self) -> bool: ...
     def exit_code(self) -> int | None: ...
+
+
+class DoormanPort(Protocol):
+    """Portier de maintenance (mc-doorman) : occupe l'endpoint réseau du
+    serveur PENDANT qu'il est volontairement arrêté et répond aux joueurs
+    (MOTD maintenance, refus de connexion expliqué).
+
+    Comme RestorePort : le port ignore Docker et le placement réseau. Notre
+    adapter démarre un one-shot qui reprend l'IP statique ciblée par playit
+    (spike 19/07/2026) ; un mode hôte (V7.2) ferait un simple bind du port —
+    même contrat, placement différent.
+    """
+
+    def engage(self, motd: str, kick: str) -> None: ...
+    def release(self) -> None: ...
+    def is_running(self) -> bool: ...
+
+
+class PendingMaintenancePort(Protocol):
+    """Fermeture pour maintenance ANNONCÉE mais pas encore engagée (délai de
+    grâce laissé aux joueurs connectés).
+
+    En mémoire, non persistant — même compromis assumé que
+    RestartSchedulerPort : perdre l'annonce si mc-admin redémarre pendant le
+    délai est acceptable (aucun serveur n'est fermé tant que l'échéance n'est
+    pas atteinte), contrairement au portier lui-même dont l'état RÉEL est
+    toujours relu depuis Docker.
+    """
+
+    def schedule(
+        self,
+        engage_at: datetime,
+        username: str,
+        motd: str,
+        kick: str,
+        total_seconds: float,
+    ) -> None: ...
+    def cancel(self) -> bool: ...
+    def status(self) -> PendingMaintenance | None: ...
+    def take_due_warning(self, now: datetime) -> int | None: ...
 
 
 class PendingRestorePort(Protocol):

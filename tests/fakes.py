@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from domain.errors import RestoreUnavailable, ServerUnavailable, UpdateUnavailable
+from domain.errors import (
+    MaintenanceUnavailable,
+    RestoreUnavailable,
+    ServerUnavailable,
+    UpdateUnavailable,
+)
 from domain.model import (
     ArchiveCheck,
     AuditEntry,
@@ -165,6 +170,7 @@ class FakeContainer:
         self.restarts = 0
         self.starts = 0
         self.stops = 0
+        self.stop_timeouts = []
 
     def status(self) -> ContainerState:
         return ContainerState(
@@ -185,10 +191,11 @@ class FakeContainer:
             raise RuntimeError("proxy 500")
         self.starts += 1
 
-    def stop(self) -> None:
+    def stop(self, timeout=None) -> None:
         if self._fail:
             raise RuntimeError("proxy 500")
         self.stops += 1
+        self.stop_timeouts.append(timeout)  # la maintenance en passe un long
 
 
 class FakeBackup:
@@ -711,6 +718,59 @@ class FakeServers:
         return False
 
 
+class FakeMapProbe:
+    """Fake MapProbePort — verdict scripté, URLs testées enregistrées."""
+
+    def __init__(self, ok=True, detail="la carte répond"):
+        self.ok = ok
+        self.detail = detail
+        self.calls: list[str] = []
+
+    def probe(self, url):
+        self.calls.append(url)
+        return self.ok, self.detail
+
+
+class FakeAppUpdateState:
+    """Fake AppUpdateStatePort — verdict en mémoire."""
+
+    def __init__(self, release=None, checked_at=None):
+        self.release = release
+        self.checked_at = checked_at
+
+    def get(self):
+        if self.release is None or self.checked_at is None:
+            return None
+        return self.release, self.checked_at
+
+    def set(self, release, checked_at):
+        self.release = release
+        self.checked_at = checked_at
+
+
+class FakeAppUpdater:
+    """Fake AppUpdaterPort — démarrages comptés, panne scriptable."""
+
+    def __init__(self, fail=None):
+        self.fail = fail
+        self.starts = 0
+
+    def start(self):
+        if self.fail is not None:
+            raise self.fail
+        self.starts += 1
+
+
+class FakeSelfImage:
+    """Fake SelfImagePort — image du conteneur courant scriptée."""
+
+    def __init__(self, value="ghcr.io/jmartinoty/mc-admin:0.9.0"):
+        self.value = value
+
+    def image(self):
+        return self.value
+
+
 class FakeDiscovery:
     """Fake ServerDiscoveryPort."""
 
@@ -924,3 +984,33 @@ class FakeWorkerIntegrity:
 
     def statuses(self):
         return list(self._checks)
+
+
+class FakeDoorman:
+    """DoormanPort en mémoire. `running` est l'état RÉEL observé (le service
+    ne déduit jamais la maintenance d'autre chose que de cette lecture)."""
+
+    def __init__(self, running=False, fail_engage=False, fail_release=False):
+        self.running = running
+        self.fail_engage = fail_engage
+        self.fail_release = fail_release
+        self.status_fail = False       # is_running() lève (proxy injoignable)
+        self.consignes = []            # (motd, kick) de chaque prise de poste
+        self.releases = 0
+
+    def engage(self, motd: str, kick: str) -> None:
+        if self.fail_engage:
+            raise MaintenanceUnavailable("portier non démarrable")
+        self.consignes.append((motd, kick))
+        self.running = True
+
+    def release(self) -> None:
+        self.releases += 1
+        if self.fail_release:
+            raise MaintenanceUnavailable("le portier tient toujours l'adresse")
+        self.running = False
+
+    def is_running(self) -> bool:
+        if self.status_fail:
+            raise MaintenanceUnavailable("état du portier illisible")
+        return self.running

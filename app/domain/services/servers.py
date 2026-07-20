@@ -212,12 +212,20 @@ class ServersMixin:
 
     _MAP_URL_RE = re.compile(r"^https?://\S{1,200}$")
 
+    @staticmethod
+    def _clean_map_url(map_url: str) -> str:
+        """Une URL collée depuis le navigateur embarque souvent la vue
+        (#overworld:0:0:…) : on ne garde que la base — le fragment n'est
+        jamais envoyé au serveur et casserait le collage des chemins du
+        relais (cas réel constaté le 19/07/2026)."""
+        return (map_url or "").strip().split("#", 1)[0].rstrip("/")
+
     def set_server_map_url(self, user: User, server_id: str, map_url: str) -> None:
-        """URL de la carte web du monde (BlueMap, Dynmap…) — servie par le
-        serveur de jeu, mc-admin ne fait qu'afficher la page qui pointe
-        dessus. Vide = effacer (l'entrée « Carte » disparaît)."""
+        """URL de la carte web du monde (BlueMap, Dynmap…) — relayée par
+        mc-admin sous sa propre origine (page Carte). Vide = effacer
+        (l'entrée « Carte » disparaît)."""
         self._authorize(user, Permission.SERVER_MANAGE)
-        map_url = (map_url or "").strip()
+        map_url = self._clean_map_url(map_url)
         if map_url and not self._MAP_URL_RE.match(map_url):
             raise InvalidGameValue(f"URL de carte invalide : {map_url!r}")
         if self._servers is None or not self._servers.set_map_url(server_id, map_url):
@@ -230,6 +238,22 @@ class ServersMixin:
         self._authorize(user, Permission.STATUS)
         first = next(iter(self._servers.list_servers()), None) if self._servers else None
         return first.map_url if first else ""
+
+    def test_map_url(self, user: User, map_url: str) -> tuple[bool, str]:
+        """Teste EN DIRECT une adresse de carte (assistant page Carte).
+        Verdict (ok, détail en langage utilisateur) — ne lève jamais pour un
+        échec de test : un « ça ne répond pas » est un résultat, pas une
+        erreur de mc-admin."""
+        self._authorize(user, Permission.SERVER_MANAGE)
+        map_url = self._clean_map_url(map_url)
+        if not self._MAP_URL_RE.match(map_url):
+            return False, "adresse invalide — elle doit commencer par http:// ou https://"
+        if self._map_probe is None:
+            return False, "test indisponible sur cette installation"
+        ok, detail = self._map_probe.probe(map_url)
+        self._record(user, Permission.SERVER_MANAGE, "allowed",
+                     f"phase=map_test url={map_url} ok={ok}")
+        return ok, detail
 
     def connection_checks(self, user: User) -> list[ConnectionCheck]:
         """Teste EN DIRECT chaque branchement de l'instance (page Serveurs).

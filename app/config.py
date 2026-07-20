@@ -14,7 +14,9 @@ import yaml
 from domain.rbac import build_roles, build_users
 
 # Version affichée dans l'UI et attendue par le tag git de release (vX.Y.Z).
-APP_VERSION = "0.9.0"
+APP_VERSION = "0.10.0"
+# Dépôt public — source des releases pour le bouton MAJ.
+APP_REPO = "jmartinoty/mc-admin"
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,8 @@ class Settings:
     password_store_file: str = "/data/passwords.json"
     mc_restore_container: str = ""
     restore_target_file: str = "/data/restore-target"
+    mc_doorman_container: str = ""
+    doorman_config_file: str = "/data/doorman.json"
     recurring_restart_file: str = "/data/recurring_restart.json"
     backup_schedule_file: str = "/data/backup_schedule.json"
     # Vide = canal désactivé (comme MC_BACKUP_CONTAINER absent).
@@ -75,6 +79,8 @@ class Settings:
     watched_containers_file: str = "/data/watched_containers.json"
     notification_config_file: str = "/data/notifications.json"
     mod_checks_file: str = "/data/mod_checks.json"
+    app_update_file: str = "/data/app_update.json"
+    app_updater_container: str = "mc-admin-updater"
     spark_dir: str = ""  # profils spark (RO) ; vide = carte absente
     pending_op_levels_file: str = "/data/pending_op_levels.json"
     mc_op_levels_container: str = ""
@@ -128,6 +134,8 @@ class Settings:
             password_store_file=env.get("PASSWORD_STORE_FILE", "/data/passwords.json"),
             mc_restore_container=env.get("MC_RESTORE_CONTAINER", ""),
             restore_target_file=env.get("RESTORE_TARGET_FILE", "/data/restore-target"),
+            mc_doorman_container=env.get("MC_DOORMAN_CONTAINER", ""),
+            doorman_config_file=env.get("DOORMAN_CONFIG_FILE", "/data/doorman.json"),
             recurring_restart_file=env.get("RECURRING_RESTART_FILE", "/data/recurring_restart.json"),
             backup_schedule_file=env.get("BACKUP_SCHEDULE_FILE", "/data/backup_schedule.json"),
             discord_webhook_url=env.get("DISCORD_WEBHOOK_URL", ""),
@@ -143,6 +151,8 @@ class Settings:
             watched_containers_file=env.get("WATCHED_CONTAINERS_FILE", "/data/watched_containers.json"),
             notification_config_file=env.get("NOTIFICATION_CONFIG_FILE", "/data/notifications.json"),
             mod_checks_file=env.get("MOD_CHECKS_FILE", "/data/mod_checks.json"),
+            app_update_file=env.get("APP_UPDATE_FILE", "/data/app_update.json"),
+            app_updater_container=env.get("APP_UPDATER_CONTAINER", "mc-admin-updater"),
             spark_dir=env.get("MC_SPARK_DIR", ""),
             pending_op_levels_file=env.get(
                 "PENDING_OP_LEVELS_FILE",
@@ -389,6 +399,17 @@ def build_mod_update_checker(settings: Settings):
     )
 
 
+def build_app_update_checker(settings: Settings):
+    """Checker de mise à jour de mc-admin (bouton MAJ) — releases GitHub."""
+    from adapters.app_update import GithubReleases, JsonAppUpdate
+    from app_update_checker import AppUpdateChecker
+
+    return AppUpdateChecker(
+        GithubReleases(APP_REPO),
+        JsonAppUpdate(settings.app_update_file),
+    )
+
+
 def build_backup_schedule(settings: Settings):
     """Ancienne planification V5 (backup_schedule.json) : n'est plus lue que
     par la MIGRATION vers les profils (seed_from_legacy) — l'UI et le
@@ -477,6 +498,14 @@ def build_service(settings: Settings):
         else NotConfiguredRestore()
     )
 
+    from adapters.doorman import DockerDoorman, NotConfiguredDoorman
+    from adapters.maintenance_state import InMemoryPendingMaintenance
+    doorman = (
+        DockerDoorman(settings.mc_doorman_container, settings.doorman_config_file)
+        if settings.mc_doorman_container
+        else NotConfiguredDoorman()
+    )
+
     notifications = build_notifications(settings)
 
     from adapters.worker_integrity import DockerWorkerIntegrity, WorkerSpec
@@ -493,6 +522,13 @@ def build_service(settings: Settings):
         worker_specs.append(WorkerSpec(
             settings.profile_backup_container, "Outil de sauvegarde",
             kinds=frozenset({"backup"})))
+    if settings.mc_doorman_container:
+        # Même image que mc-admin (le portier EST app/doorman_server.py) et même
+        # réseau de jeu : un portier périmé ou hors réseau ne tiendrait pas
+        # l'adresse du serveur, et la maintenance fermerait le serveur pour rien.
+        worker_specs.append(WorkerSpec(
+            settings.mc_doorman_container, "Portier de maintenance",
+            same_image=True, kinds=frozenset({"maintenance"})))
     if settings.mc_restore_safety_backup_container:
         worker_specs.append(WorkerSpec(
             settings.mc_restore_safety_backup_container,
@@ -545,6 +581,8 @@ def build_service(settings: Settings):
         notification_config=build_notification_config(settings),
         restore_safety_backup=restore_safety_backup,
         restore=restore,
+        doorman=doorman,
+        pending_maintenance=InMemoryPendingMaintenance(),
         recurring_restart=JsonRecurringRestart(settings.recurring_restart_file),
         pending_restore=InMemoryPendingRestore(),
         player_stats=(FilePlayerStats(settings.stats_dir, settings.usercache_file,
@@ -563,4 +601,8 @@ def build_service(settings: Settings):
         watched=build_watched_store(settings),
         mod_checks=JsonModChecks(settings.mod_checks_file) if settings.mods_dir else None,
         companion_port_factory=DockerProxyContainer,
+        map_probe=__import__("adapters.map_fetch", fromlist=["MapProbe"]).MapProbe(),
+        app_update_state=__import__("adapters.app_update", fromlist=["JsonAppUpdate"]).JsonAppUpdate(settings.app_update_file),
+        app_updater=__import__("adapters.app_update", fromlist=["DockerAppUpdater"]).DockerAppUpdater(settings.app_updater_container),
+        self_image=__import__("adapters.app_update", fromlist=["DockerSelfImage"]).DockerSelfImage(),
     )

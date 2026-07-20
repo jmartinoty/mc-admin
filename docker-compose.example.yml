@@ -2,7 +2,7 @@
 # Copier docker-compose.example.yml -> docker-compose.yml et .env.example -> .env,
 # remplir .env, puis :
 #   docker compose up -d --build
-#   docker compose --profile tools create mc-backup-profile mc-backup-safety mc-updater mc-restore mc-op-levels
+#   docker compose --profile tools create mc-backup-profile mc-backup-safety mc-updater mc-restore mc-op-levels mc-doorman
 # Premier lancement : ouvrir http://<hôte>:8080 — l'assistant crée le compte
 # administrateur puis propose de brancher le serveur (détection automatique).
 #
@@ -45,6 +45,8 @@ services:
       MC_UPDATER_CONTAINER: "mc-updater"
       MC_RESTORE_CONTAINER: "mc-restore"
       MC_OP_LEVELS_CONTAINER: "mc-op-levels"
+      MC_DOORMAN_CONTAINER: "mc-doorman"      # portier de maintenance (voir en bas)
+      DOORMAN_CONFIG_FILE: "/data/doorman.json"
       PENDING_OP_LEVELS_FILE: "/data/pending_op_levels.json"
       MC_LOG_FILE: "/logs/latest.log"
       OPS_FILE: "/ops.json"
@@ -185,6 +187,31 @@ services:
       # du compose Minecraft se résolvent identiquement côté daemon.
       - ${MC_COMPOSE_DIR}:${MC_COMPOSE_DIR}:ro
 
+  # Mise à jour de mc-admin LUI-MÊME (bouton MAJ de l'accueil) : pull de la
+  # nouvelle image publiée puis recréation de mc-admin ET de tous les
+  # one-shots (ils repartent alignés sur la même image — plus de workers
+  # périmés). C'est CE conteneur qui a le socket, jamais mc-admin ; commande
+  # FIGÉE, inerte au repos, démarré à la demande via le proxy.
+  # Nécessite MC_ADMIN_IMAGE pointant une image publiée (ghcr.io/…) — avec
+  # une image construite localement, le bouton reste masqué dans l'UI.
+  mc-admin-updater:
+    image: docker:27-cli
+    container_name: mc-admin-updater
+    restart: "no"
+    profiles: ["tools"]
+    working_dir: ${MC_ADMIN_COMPOSE_DIR:-.}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        docker compose --project-directory ${MC_ADMIN_COMPOSE_DIR:-.} pull mc-admin
+        && docker compose --project-directory ${MC_ADMIN_COMPOSE_DIR:-.} up -d --no-deps mc-admin
+        && docker compose --project-directory ${MC_ADMIN_COMPOSE_DIR:-.} --profile tools create --force-recreate mc-restore mc-backup-profile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Monté au MÊME chemin que sur l'hôte : les bind mounts relatifs de CE
+      # compose se résolvent identiquement côté daemon.
+      - ${MC_ADMIN_COMPOSE_DIR:-.}:${MC_ADMIN_COMPOSE_DIR:-.}:ro
+
   # Restauration transactionnelle : mc-admin écrit la cible dans
   # ./data/restore-target puis démarre ce conteneur via le proxy. Une
   # sauvegarde de sécurité vérifiée est TOUJOURS faite avant ; le worker garde
@@ -230,6 +257,43 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${MC_DATA_DIR}:/worlddata
       - ./data:/state
+
+  # Portier de maintenance (facultatif). Pendant que le serveur est
+  # volontairement arrêté, ce conteneur prend SON adresse sur le réseau de jeu
+  # et répond aux joueurs (MOTD « maintenance » dans la liste des serveurs,
+  # refus de connexion expliqué) au lieu de les laisser sur une erreur brute.
+  #
+  # ⚠️ Renseignez `MC_DOORMAN_IP` avec l'adresse EXACTE de votre serveur sur ce
+  # réseau (`docker inspect <serveur>`), et assurez-vous qu'elle est FIXE.
+  # C'est indispensable si un tunnel (playit, ngrok…) pointe une IP en dur, et
+  # de toute façon plus sûr : sans adresse fixe, le portier ne recevrait pas
+  # les joueurs. L'adresse doit être hors du pool dynamique du réseau.
+  # Le serveur et le portier ne peuvent jamais tourner en même temps — c'est
+  # voulu : le portier ne peut pas voler l'adresse d'un serveur vivant.
+  #
+  # MC_DOORMAN_IP vide = adresse dynamique : acceptable si vos joueurs visent
+  # l'hôte directement (le port publié suit le conteneur), INSUFFISANT si un
+  # tunnel pointe une IP en dur. Dans le doute, renseignez-la.
+  #
+  # Zéro droit Docker : il lit sa consigne dans un fichier et sert des octets.
+  #   docker compose --profile tools create --force-recreate mc-doorman
+  mc-doorman:
+    image: ${MC_ADMIN_IMAGE:-mc-admin:latest}
+    container_name: mc-doorman
+    restart: "no"
+    profiles: ["tools"]
+    entrypoint: ["python", "/app/doorman_server.py"]
+    command: []
+    environment:
+      TZ: "${TZ:-UTC}"
+      DOORMAN_CONFIG_FILE: "/consigne/doorman.json"
+      DOORMAN_PORT: "${MC_PORT:-25565}"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./data:/consigne:ro
+    networks:
+      mc_net:
+        ipv4_address: ${MC_DOORMAN_IP:-}
 
 networks:
   mc_admin_internal:

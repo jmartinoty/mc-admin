@@ -49,8 +49,13 @@ leurs commits ou redéploient involontairement Minecraft.
 
 - `nas` (`NAS-ts:/Volume1/Projects/mc-admin`) est le remote privé utilisé pour
   livrer la production.
-- `origin` est le remote GitHub destiné à pouvoir devenir public. Ne jamais y
-  pousser sans demande explicite de Jeremy.
+- `origin` est le remote GitHub **PUBLIC depuis le 19/07/2026** avec un
+  historique DISTINCT : une entrée par release, fabriquée par squash de
+  l'arbre courant (`git commit-tree main^{tree} -p <tête origin/main> -m …`
+  puis push du commit + du tag `vX.Y.Z`). Ne JAMAIS pousser l'historique
+  privé complet vers origin (de vieux commits contiennent des infos
+  personnelles) et ne jamais y pousser sans demande explicite de Jeremy.
+  L'historique de développement complet vit sur `nas` et en local.
 - Ne jamais committer `.env`, secrets, données de production ou documentation
   personnelle. `docs/dev-depuis-mac.md` reste volontairement gitignoré.
 - Avant de pousser, vérifier que le dépôt du TerraMaster est propre :
@@ -909,6 +914,61 @@ commençant par les sauvegardes ; « ajouter un serveur » viendra ensuite.
   Backlog complet priorisé (fiabilité + UX, arbitré le 18/07/2026) :
   **`docs/roadmap.md`** — s'y référer avant de proposer un nouveau
   chantier, et le tenir à jour à chaque lot livré.
+
+### Mode maintenance + portier `mc-doorman` (20/07/2026)
+
+- **✅ Livré (mode manuel)**. Fermer le serveur SANS le rendre muet : Minecraft
+  est arrêté, mais son endpoint réseau reste tenu par le portier `mc-doorman`,
+  qui répond aux joueurs à sa place (MOTD « Maintenance » dans la liste des
+  serveurs + refus de connexion expliqué au lieu d'un « connexion refusée »).
+- `app/doorman_server.py` : mini-serveur **stdlib** (aucune dépendance) parlant
+  juste assez le protocole Java Edition — handshake, status (MOTD + ping/pong),
+  refus au login/transfert. Le protocole du CLIENT est renvoyé tel quel dans
+  `version.protocol` : le serveur apparaît « compatible » et le joueur lit le
+  MOTD au lieu d'un « version incompatible ». Bornes anti-abus (taille de
+  paquet/chaîne, timeout) : le port est exposé aux joueurs, tout octet hostile
+  ferme la connexion sans tuer le portier.
+- ⚠️ **L'IP STATIQUE est le cœur du design** : le tunnel playit cible l'adresse
+  **en dur** `172.29.0.10:25565` (API playit, PAS le nom docker) — vérifié au
+  spike du 19/07. Le portier doit donc REPRENDRE l'IP de minecraft, hors du
+  pool dynamique du réseau (`172.29.0.192/26`). Conséquence assumée et
+  structurante : `minecraft` et `mc-doorman` ne peuvent JAMAIS tourner
+  ensemble (Docker refuse la seconde attribution) — c'est le garde-fou, le
+  portier ne peut pas voler l'adresse d'un serveur vivant.
+- **Zéro droit Docker pour le portier** (contrairement à mc-restore) : il lit
+  sa consigne dans un fichier (`/data/doorman.json`, écrit par mc-admin AVANT
+  le démarrage — pattern mc-restore/backup-profile) et sert des octets.
+  mc-admin le démarre/arrête via le proxy avec les permissions start/stop
+  qu'il a DÉJÀ : la whitelist du socket-proxy est INCHANGÉE.
+- Service (`domain/services/maintenance.py`) — trois garde-fous :
+  1. l'état « en maintenance » est toujours RELU du portier réel
+     (`DoormanPort.is_running()`), jamais déduit d'une variable locale ;
+  2. on ne redémarre JAMAIS le serveur avant que le portier ait rendu
+     l'adresse (`release()` attend la libération effective et lève sinon) ;
+  3. si l'arrêt réussit mais que le portier échoue, le serveur reste arrêté,
+     l'échec est audité ET notifié — « Rouvrir » est le chemin de reprise.
+- Permission dédiée **`MAINTENANCE`** (pas de réemploi de `STOP` : arrêt sec
+  définitif vs fermeture annoncée réversible — l'audit doit les distinguer).
+  Notifications sur l'événement existant `restart` (même famille
+  « disponibilité »), pas de 11e interrupteur.
+- Arrêt avec **`timeout=120`** (`ContainerPort.stop(timeout=…)`, nouveau
+  paramètre optionnel) : le défaut docker de 10 s tuait Minecraft en pleine
+  sauvegarde de ses mondes.
+- Délai de grâce optionnel : `InMemoryPendingMaintenance` (non persistant,
+  même compromis que le redémarrage programmé — rien n'est fermé tant que
+  l'échéance n'est pas atteinte) + `MaintenanceScheduler` (thread de fond,
+  famille `RestartWarningScheduler`) qui diffuse des avertissements dégressifs
+  puis ferme.
+- Création du one-shot :
+  `docker compose --profile tools create --force-recreate mc-doorman`
+  (il est aussi couvert par le `WorkerIntegrityPort` : image et réseau
+  comparés à mc-admin, cf. piège des workers périmés).
+- **Vérifié en réel le 20/07** : portier lancé dans le vrai réseau `mc_playit`
+  et interrogé par un client parlant le protocole — MOTD correct, ping/pong
+  renvoyé, refus au login avec le message de la consigne.
+- **RESTE À FAIRE** : portier automatique pendant une restauration
+  (`docs/roadmap.md` n° 7b) — délibérément séparé, le worker a 8 points
+  d'arrêt/démarrage et mérite sa propre itération testée.
 
 ### Roadmap V5.x (consolidations post-V5 — ✅ livrées au fil de l'eau)
 

@@ -194,6 +194,22 @@ class ApiTestBase(unittest.TestCase):
         from tests.fakes import FakeSpark
         self.spark = FakeSpark()
         self.companions = {"playit": FakeContainer(running=True, name="playit")}
+        from tests.fakes import FakeMapProbe
+        self.map_probe = FakeMapProbe()
+        self.map_requests: list[tuple[str, str, str]] = []
+
+        def fake_map_open(base, path, query="", **kwargs):
+            self.map_requests.append((base, path, query))
+            self.map_conditional = {k: v for k, v in kwargs.items() if v}
+            headers = {"Content-Type": "text/html", "ETag": "fake-etag",
+                       "Cache-Control": "max-age=86400"}
+            return 200, headers, iter((b"<html>FAKE MAP</html>",))
+
+        self.fake_map_open = fake_map_open
+        from tests.fakes import FakeAppUpdater, FakeAppUpdateState, FakeSelfImage
+        self.app_update_state = FakeAppUpdateState()
+        self.app_updater = FakeAppUpdater()
+        self.self_image = FakeSelfImage()
         self.service = AdminService(
             game=self.game,
             container=self.container,
@@ -229,6 +245,10 @@ class ApiTestBase(unittest.TestCase):
             notification_config=self.notify_config,
             spark=self.spark,
             mod_checks=self.mod_checks,
+            map_probe=self.map_probe,
+            app_update_state=self.app_update_state,
+            app_updater=self.app_updater,
+            self_image=self.self_image,
         )
         app = create_app(
             settings,
@@ -243,6 +263,8 @@ class ApiTestBase(unittest.TestCase):
             mod_update_checker=FakeBackgroundTask(),
             display_names=self.display_names,
             password_overrides=self.password_overrides,
+            map_open=self.fake_map_open,
+            app_update_checker=FakeBackgroundTask(),
         )
         self.client = TestClient(app, follow_redirects=False)
 
@@ -2641,46 +2663,216 @@ class TestServerAddress(ApiTestBase):
 
 @unittest.skipUnless(HAS_HTTP_STACK, "fastapi/httpx requis")
 class TestServerMap(ApiTestBase):
-    def test_no_map_url_no_nav_entry_and_redirect(self):
+    def test_unconfigured_owner_sees_assistant_viewer_redirected(self):
         self.login("jeremy", "owner-pw")
-        self.assertNotIn('href="/map"', self.client.get("/").text)
-        res = self.client.get("/map", follow_redirects=False)
-        self.assertEqual(res.status_code, 303)          # pas de carte -> accueil
+        self.assertIn('href="/map"', self.client.get("/").text)    # owner : entrée assistant
+        page = self.client.get("/map").text
+        self.assertIn("Activer la carte du monde", page)           # état assistant
+        self.assertIn("http://minecraft:8100", page)               # suggestion interne
+        self.client.post("/logout", data={"csrf_token": self.page_csrf()})
+        self.login("sam", "friend-pw")
+        self.assertNotIn('href="/map"', self.client.get("/").text)  # viewer : rien
+        self.assertEqual(self.client.get("/map", follow_redirects=False).status_code, 303)
 
-    def test_owner_sets_map_url_and_page_embeds_it(self):
+    def test_assistant_test_then_activate(self):
         self.login("jeremy", "owner-pw")
-        self.assertIn("Carte du monde", self.client.get("/servers").text)
-        res = self.client.post("/actions/servers/principal/map", data={
-            "map_url": "http://nas.example:8100", "csrf_token": self.page_csrf()})
+        res = self.client.post("/actions/map/test", data={
+            "map_url": "http://minecraft:8100", "csrf_token": self.page_csrf()})
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(self.map_probe.calls, ["http://minecraft:8100"])
+        self.assertIn("phase=map_test", self.audit.entries[-1].detail)
+        followed = self.client.get(res.headers["location"]).text
+        self.assertIn('value="http://minecraft:8100"', followed)   # brouillon conservé
+        res = self.client.post("/actions/map", data={
+            "server_id": "principal", "map_url": "http://minecraft:8100",
+            "csrf_token": self.page_csrf()})
         self.assertEqual(res.status_code, 303)
         self.assertIn("phase=server_map_updated", self.audit.entries[-1].detail)
-        self.assertIn('href="/map"', self.client.get("/").text)   # entrée sidebar
         page = self.client.get("/map").text
-        self.assertIn('src="http://nas.example:8100"', page)      # iframe
-        self.assertIn("Ouvrir dans un onglet", page)              # repli lien
+        self.assertIn('src="/map/embed/"', page)                   # iframe MÊME ORIGINE
+        self.assertNotIn("http://minecraft:8100</iframe>", page)
 
-    def test_viewer_sees_map_but_cannot_edit(self):
-        self.servers.set_map_url("principal", "http://nas.example:8100")
+    def test_embed_streams_through_bounded_relay(self):
+        self.servers.set_map_url("principal", "http://minecraft:8100")
+        self.login("sam", "friend-pw")                             # viewer aussi
+        self.assertIn('href="/map"', self.client.get("/").text)
+        res = self.client.get("/map/embed/assets/index.js?v=1")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b"FAKE MAP", res.content)
+        self.assertEqual(self.map_requests[-1],
+                         ("http://minecraft:8100", "assets/index.js", "v=1"))
+        self.assertEqual(res.headers.get("etag"), "fake-etag")     # cache navigateur préservé
+        self.assertEqual(res.headers.get("cache-control"), "max-age=86400")
+
+    def test_embed_forwards_conditional_headers(self):
+        self.servers.set_map_url("principal", "http://minecraft:8100")
         self.login("sam", "friend-pw")
-        self.assertIn('href="/map"', self.client.get("/").text)   # visible par tous
-        self.assertEqual(self.client.get("/map").status_code, 200)
-        res = self.client.post("/actions/servers/principal/map", data={
+        self.client.get("/map/embed/tile.png", headers={
+            "If-None-Match": "fake-etag",
+            "If-Modified-Since": "Sun, 19 Jul 2026 05:04:16 GMT"})
+        self.assertEqual(self.map_conditional, {
+            "if_none_match": "fake-etag",
+            "if_modified_since": "Sun, 19 Jul 2026 05:04:16 GMT"})
+
+    def test_embed_requires_configured_map_and_login(self):
+        self.login("jeremy", "owner-pw")
+        self.assertEqual(self.client.get("/map/embed/").status_code, 404)  # rien configuré
+        self.client.post("/logout", data={"csrf_token": self.page_csrf()})
+        self.servers.set_map_url("principal", "http://minecraft:8100")
+        res = self.client.get("/map/embed/", follow_redirects=False)
+        self.assertEqual(res.status_code, 303)                     # non connecté -> login
+
+    def test_viewer_cannot_edit_map(self):
+        self.servers.set_map_url("principal", "http://minecraft:8100")
+        self.login("sam", "friend-pw")
+        res = self.client.post("/actions/map", data={
+            "server_id": "principal", "map_url": "http://pirate.example",
+            "csrf_token": self.page_csrf()})
+        self.assertEqual(res.status_code, 403)
+        res = self.client.post("/actions/map/test", data={
             "map_url": "http://pirate.example", "csrf_token": self.page_csrf()})
         self.assertEqual(res.status_code, 403)
 
     def test_invalid_map_url_rejected(self):
         self.login("jeremy", "owner-pw")
-        self.client.post("/actions/servers/principal/map", data={
-            "map_url": "javascript:alert(1)", "csrf_token": self.page_csrf()})
-        self.assertIn("invalide", self.client.get("/servers").text)
+        self.client.post("/actions/map", data={
+            "server_id": "principal", "map_url": "javascript:alert(1)",
+            "csrf_token": self.page_csrf()})
+        self.assertIn("invalide", self.client.get("/map").text)
+        self.assertIn("Activer la carte du monde", self.client.get("/map").text)  # toujours assistant
+
+    def test_pasted_browser_url_is_cleaned_of_fragment(self):
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/map", data={
+            "server_id": "principal",
+            "map_url": "http://192.0.2.10:8100/#overworld:0:0:0:1500:0:0:0:0:perspective",
+            "csrf_token": self.page_csrf()})
+        self.assertEqual(self.servers.servers[0].map_url, "http://192.0.2.10:8100")
+        self.client.post("/actions/map/test", data={
+            "map_url": "http://192.0.2.10:8100/#overworld:0:0", "csrf_token": self.page_csrf()})
+        self.assertEqual(self.map_probe.calls[-1], "http://192.0.2.10:8100")
+
+    def test_disabling_map_removes_nav_for_viewer(self):
+        self.servers.set_map_url("principal", "http://minecraft:8100")
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/map", data={
+            "server_id": "principal", "map_url": "", "csrf_token": self.page_csrf()})
+        self.client.post("/logout", data={"csrf_token": self.page_csrf()})
+        self.login("sam", "friend-pw")
         self.assertNotIn('href="/map"', self.client.get("/").text)
 
-    def test_clearing_map_url_removes_nav_entry(self):
-        self.servers.set_map_url("principal", "http://nas.example:8100")
+
+@unittest.skipUnless(HAS_HTTP_STACK, "fastapi/httpx requis")
+class TestAppUpdate(ApiTestBase):
+    # Versions RELATIVES à APP_VERSION : un bump de version ne doit jamais
+    # casser ces tests (vécu au passage 0.9.0 -> 0.10.0).
+    NEWER_VERSION = "0.99.0"
+
+    def _announce(self, version=NEWER_VERSION):
+        from domain.model import AppRelease
+        self.app_update_state.set(
+            AppRelease(version=version, notes="Corrections et améliorations.",
+                       url="https://github.com/jmartinoty/mc-admin/releases/tag/v" + version),
+            datetime.now(timezone.utc))
+
+    def test_no_verdict_no_card(self):
         self.login("jeremy", "owner-pw")
-        self.client.post("/actions/servers/principal/map", data={
-            "map_url": "", "csrf_token": self.page_csrf()})
-        self.assertNotIn('href="/map"', self.client.get("/").text)
+        self.assertNotIn("Mise à jour de mc-admin", self.client.get("/").text)
+
+    def test_same_version_no_card(self):
+        from config import APP_VERSION
+        self._announce(APP_VERSION)
+        self.login("jeremy", "owner-pw")
+        self.assertNotIn("Mise à jour de mc-admin", self.client.get("/").text)
+
+    def test_card_shown_to_owner_with_apply_button(self):
+        self._announce()
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/").text
+        self.assertIn("Mise à jour de mc-admin disponible", page)
+        self.assertIn("v" + self.NEWER_VERSION, page)
+        self.assertIn("Corrections et améliorations.", page)
+        self.assertIn('action="/actions/app-update"', page)        # install ghcr -> bouton
+
+    def test_card_hidden_from_viewer(self):
+        self._announce()
+        self.login("sam", "friend-pw")
+        self.assertNotIn("Mise à jour de mc-admin", self.client.get("/").text)
+
+    def test_git_install_shows_honest_reason_instead_of_button(self):
+        self._announce()
+        self.self_image.value = "mc-admin:latest"                  # build git local
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/").text
+        self.assertIn("Mise à jour de mc-admin disponible", page)  # détection quand même
+        self.assertNotIn('action="/actions/app-update"', page)
+        self.assertIn("dépôt git", page)
+
+    def test_apply_starts_updater_and_shows_waiting_page(self):
+        self._announce()
+        self.login("jeremy", "owner-pw")
+        res = self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(res.headers["location"], "/updating")
+        self.assertEqual(self.app_updater.starts, 1)
+        self.assertIn("phase=app_update_applied version=" + self.NEWER_VERSION,
+                      self.audit.entries[-1].detail)
+        page = self.client.get("/updating").text
+        self.assertIn("Mise à jour en cours", page)
+        self.assertIn("/healthz", page)                            # sonde de retour
+
+    def test_apply_refused_without_verdict(self):
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(self.app_updater.starts, 0)
+        self.assertIn("MAJ-01", self.client.get("/").text)         # flash_error à code
+
+    def test_apply_refused_on_git_install(self):
+        self._announce()
+        self.self_image.value = "mc-admin:latest"
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(self.app_updater.starts, 0)
+        self.assertIn("phase=app_update_blocked", self.audit.entries[-1].detail)
+
+    def test_apply_refused_during_restore(self):
+        from datetime import timedelta
+
+        from domain.model import PendingRestore
+        self._announce()
+        self.pending_restore.set(PendingRestore(
+            filename="a.tar.gz", requested_by="jeremy",
+            deadline=datetime.now(timezone.utc) + timedelta(minutes=15)))
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(self.app_updater.starts, 0)
+        self.assertIn("restauration-en-cours", self.audit.entries[-1].detail)
+
+    def test_apply_works_without_backup_tooling(self):
+        # Install partielle (pas d'outil de sauvegarde) : un port absent n'est
+        # pas une opération en cours — bug attrapé au banc réel du 19/07.
+        self._announce()
+        self.service._profile_backup = None
+        self.login("jeremy", "owner-pw")
+        res = self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(res.headers["location"], "/updating")
+        self.assertEqual(self.app_updater.starts, 1)
+
+    def test_apply_failure_is_audited_and_flashed(self):
+        from domain.errors import UpdateUnavailable
+        self._announce()
+        self.app_updater.fail = UpdateUnavailable("conteneur absent")
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertIn("phase=app_update_failed", self.audit.entries[-1].detail)
+        self.assertIn("MAJ-01", self.client.get("/").text)
+
+    def test_viewer_cannot_apply(self):
+        self._announce()
+        self.login("sam", "friend-pw")
+        res = self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(self.app_updater.starts, 0)
 
 
 @unittest.skipUnless(HAS_HTTP_STACK, "fastapi/httpx requis")

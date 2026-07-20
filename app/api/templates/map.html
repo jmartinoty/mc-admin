@@ -1,28 +1,60 @@
 {% extends "shell.html" %}
 {% block page %}
 <h1>Carte</h1>
+
+{% if map_url %}
 <section class="card map-card">
   <div class="map-toolbar">
-    <p class="muted">Carte du monde, servie par le serveur de jeu.</p>
-    <a class="btn" href="{{ map_url }}" target="_blank" rel="noopener">Ouvrir dans un onglet</a>
+    <p class="muted">Carte du monde, servie par mc-admin — l'adresse d'origine reste privée.</p>
+    <a class="btn" href="/map/embed/" target="_blank" rel="noopener">Ouvrir dans un onglet</a>
   </div>
-  <iframe id="mapFrame" class="map-frame" src="{{ map_url }}" title="Carte du monde"
-          loading="lazy" referrerpolicy="no-referrer"></iframe>
-  <p class="muted" id="mapMixedNote" hidden>
-    Le navigateur refuse d'afficher la carte dans cette page : elle est servie
-    en HTTP alors que mc-admin est en HTTPS. Utilise « Ouvrir dans un onglet ».
-  </p>
+  <iframe class="map-frame" src="/map/embed/" title="Carte du monde" loading="lazy"></iframe>
+  {% if can_servers %}
+  <details class="map-config">
+    <summary class="muted">Modifier ou désactiver</summary>
+    <form method="post" action="/actions/map" class="inline addr-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="server_id" value="{{ map_server_id }}">
+      <label>Adresse de la carte
+        <input name="map_url" value="{{ map_url }}" autocomplete="off">
+      </label>
+      <button class="small">Enregistrer</button>
+    </form>
+    <form method="post" action="/actions/map" class="inline js-confirm-form"
+          data-confirm="Désactiver la carte ? L'entrée « Carte » disparaîtra pour tous les comptes.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="server_id" value="{{ map_server_id }}">
+      <input type="hidden" name="map_url" value="">
+      <button class="small danger">Désactiver</button>
+    </form>
+  </details>
+  {% endif %}
 </section>
-{% endblock %}
-{% block page_scripts %}
-<script>
-(function () {
-  var frame = document.getElementById("mapFrame");
-  var note = document.getElementById("mapMixedNote");
-  if (window.location.protocol === "https:" && frame.getAttribute("src").indexOf("http://") === 0) {
-    frame.hidden = true;
-    note.hidden = false;
-  }
-})();
-</script>
+
+{% else %}
+<section class="card">
+  <h2>Activer la carte du monde</h2>
+  <p class="muted">mc-admin peut afficher la carte web générée par un mod comme
+    <b>BlueMap</b> ou Dynmap. Le mod s'installe côté serveur (mc-admin ne
+    l'installe pas à ta place) ; ensuite mc-admin va chercher la carte
+    lui-même et l'affiche sous sa propre adresse — l'adresse de la carte peut
+    rester interne, rien de plus à exposer.</p>
+  <p>
+    {% if map_mod_detected %}
+    <span class="pill ok pill-sm"><span class="led"></span>mod de carte détecté : {{ map_mod_detected }}</span>
+    {% else %}
+    <span class="pill neutral pill-sm">aucun mod de carte détecté parmi les mods installés</span>
+    {% endif %}
+  </p>
+  <form method="post" action="/actions/map" class="inline addr-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="server_id" value="{{ map_server_id }}">
+    <label>Adresse de la carte <span class="info-tip" tabindex="0" aria-label="L'adresse où le mod sert sa carte. Depuis mc-admin, l'adresse interne du conteneur fonctionne — BlueMap utilise le port 8100 par défaut.">?<span class="tip-body">L'adresse où le mod sert sa carte. Depuis mc-admin, l'adresse interne du conteneur fonctionne — BlueMap utilise le port 8100 par défaut.</span></span>
+      <input name="map_url" value="{{ map_draft }}" placeholder="{{ map_suggested }}" autocomplete="off">
+    </label>
+    <button type="submit" class="small" formaction="/actions/map/test">Tester</button>
+    <button type="submit" class="small">Activer la carte</button>
+  </form>
+</section>
+{% endif %}
 {% endblock %}

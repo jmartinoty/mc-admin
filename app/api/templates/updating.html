@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="updating-wrap">
+  <section class="card updating-card" role="status" aria-live="polite">
+    <h1>Mise à jour en cours…</h1>
+    <p class="muted">mc-admin télécharge la nouvelle version et redémarre.
+      Cette page reviendra toute seule au tableau de bord — ne ferme pas
+      l'onglet, ça prend généralement moins d'une minute.</p>
+    <div class="updating-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+    <p class="muted" id="updatingHint" hidden>Ça dure plus longtemps que prévu —
+      si rien ne revient d'ici quelques minutes, recharge la page à la main.</p>
+  </section>
+</div>
+<script>
+(function () {
+  var started = Date.now();
+  var hint = document.getElementById("updatingHint");
+  function probe() {
+    // Laisser 8 s à l'updater pour ARRÊTER l'ancienne version : un healthz
+    // « ok » immédiat serait celui de l'ancien conteneur encore vivant.
+    fetch("/healthz", { cache: "no-store" })
+      .then(function (res) {
+        if (res.ok && Date.now() - started > 8000) { window.location = "/"; return; }
+        schedule();
+      })
+      .catch(schedule);
+  }
+  function schedule() {
+    if (Date.now() - started > 120000 && hint) hint.hidden = false;
+    setTimeout(probe, 2000);
+  }
+  setTimeout(probe, 3000);
+})();
+</script>
+{% endblock %}

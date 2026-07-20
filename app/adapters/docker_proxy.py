@@ -82,8 +82,14 @@ class DockerProxyContainer:
     def start(self) -> None:
         self._target().start()
 
-    def stop(self) -> None:
-        self._target().stop()
+    def stop(self, timeout: int | None = None) -> None:
+        # timeout=None -> défaut docker-py (10 s). L'arrêt de maintenance passe
+        # une valeur bien plus large : Minecraft sauvegarde ses mondes à
+        # l'arrêt et se faisait tuer au SIGKILL avant la fin (spike 19/07/2026).
+        if timeout is None:
+            self._target().stop()
+        else:
+            self._target().stop(timeout=timeout)
 
 
 class DockerServerDiscovery:

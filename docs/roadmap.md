@@ -45,18 +45,19 @@ n'est développée qu'après validation explicite de Jeremy.
    façade assemblée, import public et suite de tests INCHANGÉS
    (828 verts). Le bouton MAJ et le mode maintenance arriveront chacun
    dans leur module.
-3. **Mise à jour en un clic depuis l'UI** (demande Jeremy 18/07/2026) :
-   fini le redéploiement manuel — mc-admin détecte qu'une nouvelle
-   version est publiée (image ghcr + notes de release GitHub, vérif
-   périodique façon ModUpdateChecker), affiche « Mise à jour
-   disponible » avec le résumé des changements (« corrections,
-   améliorations UI… ») et un bouton « Appliquer » (owner, confirmation).
-   L'application passe par un one-shot privilégié `mc-admin-updater`
-   (modèle mc-updater : socket chez LUI) qui pull la nouvelle image et
-   recrée mc-admin ET tous les one-shots — ce qui élimine au passage le
-   piège des workers périmés. Dépend de la release v1.0 (images ghcr
-   versionnées + changelog) ; le check préflight (backlog n°1) reste le
-   filet en attendant.
+3. ✅ **Mise à jour en un clic depuis l'UI** — FAIT (19/07, 868 tests) :
+   AppUpdateChecker (releases GitHub, 1 passe/24 h, verdict persisté,
+   release v0.9.0 créée sur GitHub comme source), carte accueil owner
+   (version + notes + Appliquer confirmé), one-shot privilégié
+   `mc-admin-updater` (pull + recréation de mc-admin ET des one-shots —
+   fin du piège des workers périmés), garde-fous audités
+   (phase=app_update_* : version connue exigée, refus si sauvegarde/
+   restauration en cours, install à tag local = bouton remplacé par une
+   explication — le cas du NAS de dev), page /updating qui sonde le
+   retour. TESTÉ EN RÉEL au banc (instance jetable + registre local) :
+   cycle complet clic → recréation sous ses pieds → healthz revenu →
+   audit ; le banc a attrapé un vrai bug (port de sauvegarde absent =
+   refus non audité), corrigé + test de non-régression.
 4. **V7 = 2.0** : V7.1 multi-serveur, V7.2 mode hôte sans Docker
    (le découpage V7.0 est remonté en 2bis).
 
@@ -70,11 +71,14 @@ n'est développée qu'après validation explicite de Jeremy.
 | 4 | Seuils d'alertes configurables | MSPT, espace disque, durée d'incident réglables dans l'UI | Moyen | À faire |
 | 5 | Diagnostic global | Une page synthétise ce qui ne va pas : RCON, disque, backups, notifications, proxy, workers | Moyen | À faire |
 | 6 | Historique de stockage | Courbes de taille des sauvegardes, estimation du temps avant saturation | Moyen | À faire |
-| 7 | Mode maintenance + portier `mc-doorman` (design validé Jeremy 19/07) | Mini-serveur stdlib répondant au protocole MC : MOTD « Maintenance — retour HH:MM » dans la liste des serveurs + refus de connexion avec message. Automatique pendant une restauration (démarré/arrêté par le worker autour de l'arrêt de minecraft) + bouton owner (message/durée, say + délai de grâce, audité/notifié). ⚠ À valider en réel : reprise du port/alias réseau pour playit. Prévu APRÈS le bouton MAJ | Moyen | À faire |
+| 7 | Mode maintenance + portier `mc-doorman` (design validé Jeremy 19/07) | Mini-serveur stdlib répondant au protocole MC : MOTD « Maintenance — retour HH:MM » dans la liste des serveurs + refus de connexion avec message. Bouton owner (message/horizon/délai de grâce, say + compte à rebours, audité/notifié). | Moyen | ✅ Livré 20/07 (mode manuel) — voir ci-dessous |
+| 7b | Portier AUTOMATIQUE pendant une restauration | Le worker `restore_worker.py` démarre/arrête le portier autour de son arrêt de minecraft. **Volontairement séparé du lot 7** : le worker a 8 points d'arrêt/démarrage (chemins de rollback et de reprise compris) et vient d'être validé en réel — l'instrumenter demande sa propre itération et son propre test de restauration, pas un ajout opportuniste | Moyen | À faire |
 | 8 | Sessions utilisateur | Voir/révoquer les appareils connectés (contrainte : sessions en mémoire, process unique) | Moyen | À faire |
 | 9 | 2FA pour l'owner | Protection des actions sensibles (TOTP) | Moyen | À faire |
 | 10 | API locale documentée | Intégration nas-dashboard, scripts | Moyen | À faire |
 | 11 | Historique des incidents | Panne + récupération + actions + durée, regroupés | Moyen | À faire |
+| 12 | BlueMap propre en conteneur (décision Jeremy 19/07 : conteneur isolé, pas de mod pour l'instant) | Sortir `bluemap-trial` du provisoire : service dans un compose (redémarre avec la stack), réseau partagé avec mc-admin (adresse interne stable, plus d'IP LAN), port 8100 NON publié (la carte n'est joignable QUE via le relais authentifié), rendu planifié la nuit (bridé) | Moyen | À faire |
+| — | BlueMap en mod dans le serveur (carte en continu + joueurs en direct) | PRÉREQUIS posé par Jeremy (19/07) : un monitoring de perf correct d'abord, pour mesurer l'impact du mod en connaissance de cause (CPU/RAM par conteneur dont bluemap, RAM JVM, graphiques annotés — cf. backlog n° 4/7 UX). Le mod ajoute RAM/CPU dans la JVM du jeu et son premier rendu complet tourne dedans | Moyen | Reporté |
 | — | Test de restauration automatique périodique | Prérequis LEVÉ : test réel du worker réussi la nuit du 18-19/07 (protocole gamerule, exit 0, marqueur restauré). À décider plus tard si la version périodique vaut sa machinerie | Grand | Reporté |
 | — | Assistant de mise à jour des mods | Écarté : contredit la doctrine « mc-admin ne met jamais un mod à jour » (badges Modrinth en lecture seule suffisent) | Grand | Écarté |
 
@@ -91,7 +95,7 @@ n'est développée qu'après validation explicite de Jeremy.
 | 2d | État « démarrage en cours » honnête | Conteneur running + RCON muet ⇒ « démarrage en cours » (< 5 min) puis « en ligne · jeu injoignable » ; badge version en attente | Petit | ✅ Livré 18/07 |
 | 2f | Têtes de skin en avatars | mc-heads.net par uuid (repli pseudo puis lettre via onerror) — liste, panneau, fiche | Petit | ✅ Livré 18/07 |
 | 3 | Recherche et tri des joueurs | Recherche par pseudo, tri en ligne / dernière connexion / temps de jeu / A→Z, combinés aux filtres | Petit | ✅ Livré 19/07 |
-| 3b | Page Carte (BlueMap/Dynmap) | URL de carte par serveur (page Serveurs), entrée « Carte » pour tous les comptes, iframe + repli lien si contenu mixte | Petit | ✅ Livré 19/07 |
+| 3b | Page Carte (BlueMap/Dynmap) — v2 « proxy + assistant » (retour Jeremy : pas un champ dans Serveurs, et le contenu mixte HTTP/HTTPS bloquait l'iframe) | mc-admin sert la carte sous sa propre origine (/map/embed/, relais borné anti-SSRF — l'adresse peut rester interne, ex. http://minecraft:8100) ; page Carte owner = assistant (détection du mod, bouton Tester, activation) ; entrée visible par tous une fois activée | Moyen | ✅ Livré 19/07 (v2) |
 | 3c | Graphe MSPT honnête | max_over_time (un pic ne se cache plus entre 2 points), axe horaire, plages 24 h/3 j/7 j, timeout dédié aux query_range | Petit | ✅ Livré 19/07 |
 | 4 | Favoris et protection d'archives | Épingler une sauvegarde, l'exclure explicitement de la rétention | Moyen | À faire |
 | 5 | Navigation mobile dédiée (étape 2) | Barre inférieure compacte façon app native (Accueil · Joueurs · Sauvegardes · ⋯) — après retours d'usage sur le menu replié 2e | Moyen | À faire |

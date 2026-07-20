@@ -34,6 +34,8 @@ services:
       MC_SPARK_DIR: "/spark"               # profils spark (carte /performance)
       MC_UPDATER_CONTAINER: "mc-updater"   # idem pour la mise à jour contrôlée
       MC_RESTORE_CONTAINER: "mc-restore"   # one-shot privilégié : restaure une archive (V5.7)
+      MC_DOORMAN_CONTAINER: "mc-doorman"   # portier : tient l'adresse du serveur pendant sa maintenance
+      DOORMAN_CONFIG_FILE: "/data/doorman.json"  # consigne écrite ici par mc-admin, lue par le portier
       MC_OP_LEVELS_CONTAINER: "mc-op-levels" # applique les niveaux individuels pendant un redémarrage
       PENDING_OP_LEVELS_FILE: "/data/pending_op_levels.json"
       RESTORE_TARGET_FILE: "/data/restore-target"  # mc-admin y écrit l'archive à restaurer
@@ -220,6 +222,28 @@ services:
   # Profil `tools` :
   #   docker compose --profile tools create --force-recreate mc-restore
   # ⚠️ Tester une PREMIÈRE restauration sur un monde jetable avant de s'y fier.
+  # Mise à jour de mc-admin LUI-MÊME (bouton MAJ) : c'est CE conteneur qui a
+  # le socket Docker, jamais mc-admin (même modèle que mc-updater). Commande
+  # FIGÉE : pull de la nouvelle image, recréation de mc-admin puis de TOUS
+  # les one-shots — le piège des workers périmés disparaît avec.
+  # ⚠ Sans effet sur CETTE installation (build git local, pull inoffensif) :
+  # le bouton est masqué dans l'UI, service défini pour parité avec l'exemple.
+  mc-admin-updater:
+    image: docker:27-cli
+    container_name: mc-admin-updater
+    restart: "no"                   # one-shot
+    profiles: ["tools"]
+    working_dir: /Volume1/Projects/mc-admin
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        docker compose --project-directory /Volume1/Projects/mc-admin --env-file /Volume1/Projects/mc-admin/.env pull mc-admin
+        && docker compose --project-directory /Volume1/Projects/mc-admin --env-file /Volume1/Projects/mc-admin/.env up -d --no-deps mc-admin
+        && docker compose --project-directory /Volume1/Projects/mc-admin --env-file /Volume1/Projects/mc-admin/.env --profile tools create --force-recreate mc-restore mc-op-levels mc-backup-profile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /Volume1/Projects/mc-admin:/Volume1/Projects/mc-admin:ro
+
   mc-restore:
     # Réutilise l'image mc-admin : restore_worker.py contient la transaction
     # staging -> rollback reflink -> synchronisation en place.
@@ -263,6 +287,47 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /Volume1/GameServers/minecraft/data:/worlddata
       - /Volume1/Projects/mc-admin/data:/state
+
+  # Portier de maintenance. Pendant que `minecraft` est volontairement arrêté,
+  # ce conteneur prend SON adresse sur le réseau de jeu et répond aux joueurs
+  # (MOTD « maintenance » dans la liste des serveurs, refus de connexion
+  # expliqué) au lieu de les laisser sur un « connexion refusée » brut.
+  #
+  # ⚠️ L'IP STATIQUE n'est pas un détail : le tunnel playit cible l'adresse EN
+  # DUR (172.29.0.10:25565), pas le nom docker — vérifié au spike du
+  # 19/07/2026. Un portier sur une IP dynamique ne recevrait jamais les
+  # joueurs venus du tunnel. Elle est hors du pool dynamique du réseau
+  # (172.29.0.192/26), donc réservée : personne ne peut la prendre par hasard.
+  #
+  # Conséquence assumée : `minecraft` et `mc-doorman` ne peuvent JAMAIS tourner
+  # en même temps (Docker refuserait la seconde attribution). C'est le
+  # garde-fou : le portier ne peut pas voler l'adresse d'un serveur vivant, et
+  # mc-admin relève toujours le portier AVANT de redémarrer le serveur.
+  #
+  # Zéro droit Docker (contrairement à mc-restore) : il lit sa consigne dans un
+  # fichier et sert des octets. mc-admin le démarre/arrête via le proxy, avec
+  # les permissions start/stop qu'il a déjà.
+  # Profil `tools` :
+  #   docker compose --profile tools create --force-recreate mc-doorman
+  mc-doorman:
+    image: mc-admin:latest          # le portier EST app/doorman_server.py
+    container_name: mc-doorman
+    restart: "no"                   # démarré/arrêté à la demande, jamais tout seul
+    profiles: ["tools"]
+    entrypoint: ["python", "/app/doorman_server.py"]
+    command: []
+    environment:
+      TZ: "Europe/Paris"
+      DOORMAN_CONFIG_FILE: "/consigne/doorman.json"
+      DOORMAN_PORT: "25565"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      # Consigne écrite par mc-admin AVANT le démarrage (pattern mc-restore) :
+      # aucun paramètre ne transite par l'API Docker.
+      - /Volume1/Projects/mc-admin/data:/consigne:ro
+    networks:
+      mc_playit:
+        ipv4_address: "${MC_DOORMAN_IP:-172.29.0.10}"
 
 networks:
   mc_admin_internal:

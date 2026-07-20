@@ -16,6 +16,7 @@ from domain.services.base import (  # noqa: F401 — ré-exports publics
     ServiceCore,
 )
 from domain.services.game import GameMixin
+from domain.services.maintenance import MaintenanceMixin
 from domain.services.moderation import ModerationMixin
 from domain.services.monitoring import MonitoringMixin
 from domain.services.servers import ServersMixin
@@ -29,6 +30,7 @@ class AdminService(
     ActionsMixin,
     BackupsMixin,
     GameMixin,
+    MaintenanceMixin,
     UpdateMixin,
     ModerationMixin,
     ServiceCore,

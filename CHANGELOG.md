@@ -4,6 +4,47 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.10.0 — 2026-07-20
+
+### Mode maintenance (nouveau)
+- Fermer le serveur SANS le rendre muet : un portier (`mc-doorman`) reprend
+  son adresse réseau pendant l'arrêt et répond aux joueurs — MOTD
+  « Maintenance » dans la liste des serveurs et refus de connexion expliqué,
+  au lieu d'un « connexion refusée » brut. Fonctionne aussi derrière un
+  tunnel (playit) qui cible une IP fixe.
+- Message et heure de retour personnalisables, délai de grâce optionnel avec
+  avertissements dégressifs in-game avant la fermeture.
+- Bandeau visible de tous pendant la maintenance ; « Rouvrir » relève le
+  portier puis relance le serveur (jamais l'inverse : l'adresse est rendue
+  d'abord). Permission dédiée `MAINTENANCE`.
+- Nouveau service compose `mc-doorman` (profil `tools`) et variable
+  `MC_DOORMAN_IP` — voir `docker-compose.example.yml`.
+
+### Mise à jour de mc-admin en un clic (nouveau)
+- Détection automatique des nouvelles versions (une vérification par jour),
+  carte sur l'accueil de l'owner avec les notes de version.
+- Application en un clic pour les installations par image (ghcr) : un
+  one-shot dédié tire la nouvelle image et recrée mc-admin ET ses outils —
+  fini les workers restés sur une image périmée. Refus si une sauvegarde ou
+  une restauration est en cours ; installations « build local » : détection
+  seule, avec explication.
+
+### Carte, joueurs, performances
+- Page Carte v2 : mc-admin sert la carte (BlueMap, Dynmap…) sous sa propre
+  origine — plus de blocage de contenu mixte HTTP/HTTPS, fonctionne en LAN
+  comme à distance ; assistant d'activation (détection, test, activation) ;
+  cache navigateur préservé (déplacements fluides).
+- Joueurs : recherche par pseudo et tris (en ligne, dernière connexion,
+  temps de jeu, A→Z), combinés aux filtres existants.
+- Graphe MSPT honnête : un pic ne peut plus se cacher entre deux points
+  (max par fenêtre), axe horaire, plages 24 h / 3 j / 7 j.
+
+### Interne
+- `services.py` découpé en package `domain/services/` (9 modules par thème,
+  import public inchangé).
+- Arrêt du conteneur serveur avec 120 s de grâce (le défaut docker de 10 s
+  pouvait interrompre une sauvegarde des mondes en plein vol).
+
 ## v0.9.0 — 2026-07-19 (première bêta publique)
 
 Première version publiée. État du produit à cette date :

@@ -14,7 +14,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Tableau de bord</a>
     <a class="navitem {{ 'active' if active == 'performance' }}" href="/performance"{% if active == 'performance' %} aria-current="page"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 17l5-6 4 3 5-8 4 5"/><path d="M3 21h18"/></svg>Performances</a>
-    {% if map_url %}
+    {% if map_url or can_servers %}
     <a class="navitem {{ 'active' if active == 'map' }}" href="/map"{% if active == 'map' %} aria-current="page"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 4l6 2 6-2v14l-6 2-6-2-6 2V6l6-2z"/><path d="M9 4v14M15 6v14"/></svg>Carte</a>
     {% endif %}
@@ -170,6 +170,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/shell.js?v=20260719-quickwins"></script>
+<script src="/static/shell.js?v=20260719-maj"></script>
 {% block page_scripts %}{% endblock %}
 {% endblock %}

@@ -39,6 +39,7 @@ class Permission(str, Enum):
     BACKUP_MANAGE = "BACKUP_MANAGE"      # créer/modifier les profils de sauvegarde (V6, owner)
     SERVER_MANAGE = "SERVER_MANAGE"      # gérer les serveurs administrés + branchements (V6.3, owner)
     USER_MANAGE = "USER_MANAGE"          # créer/gérer les comptes mc-admin (V6.4, owner)
+    MAINTENANCE = "MAINTENANCE"          # fermer/rouvrir le serveur en maintenance (owner)
 
 
 # Dans le YAML, ce jeton accorde toutes les permissions à un rôle.
@@ -243,6 +244,31 @@ class PendingRestore:
 
 
 @dataclass(frozen=True)
+class PendingMaintenance:
+    """Une fermeture pour maintenance annoncée : le serveur ferme à
+    `engage_at` (fin du délai de grâce), le portier prend alors le relais.
+    Même compromis en mémoire que ScheduledRestart : perdre la programmation
+    si mc-admin redémarre est acceptable pour une action de courte portée."""
+
+    engage_at: datetime
+    requested_by: str
+    motd: str
+    kick: str
+    operation_id: str = ""
+
+
+@dataclass(frozen=True)
+class MaintenanceStatus:
+    """Vue du mode maintenance : portier en place et/ou fermeture annoncée.
+    `motd` n'est connu que du vivant du process qui a engagé la maintenance
+    (contexte d'affichage, jamais une source de décision)."""
+
+    active: bool
+    pending: PendingMaintenance | None = None
+    motd: str = ""
+
+
+@dataclass(frozen=True)
 class BackupProfile:
     """Une configuration de sauvegarde (V6) : quoi, où, quand, combien de
     temps. Plusieurs profils peuvent coexister (et à terme, plusieurs
@@ -443,6 +469,31 @@ class UpdateStatus:
     latest_version: str | None
     update_available: bool
     changelog_url: str | None
+
+
+@dataclass(frozen=True)
+class AppRelease:
+    """Une release publiée de mc-admin (bouton MAJ) : tag GitHub + notes."""
+
+    version: str          # « 0.9.1 » (sans le v)
+    notes: str = ""       # corps de la release, borné par l'adapter
+    url: str = ""         # page de la release
+
+
+@dataclass(frozen=True)
+class AppUpdateStatus:
+    """État de mise à jour de mc-admin LUI-MÊME (carte accueil, owner).
+
+    `can_apply` = le bouton « Appliquer » a un sens sur cette installation ;
+    sinon `reason` dit pourquoi en langage utilisateur (ex. installation
+    gérée par git : la mise à jour passe par le dépôt, pas par l'image)."""
+
+    current_version: str
+    latest: AppRelease | None
+    update_available: bool
+    checked_at: datetime | None
+    can_apply: bool
+    reason: str = ""
 
 
 @dataclass(frozen=True)

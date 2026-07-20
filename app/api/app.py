@@ -22,6 +22,7 @@ from api.login_security import ClientIpResolver, LoginAttemptLimiter
 from api.routes import router
 from config import (
     Settings,
+    build_app_update_checker,
     build_archive_verifier,
     build_display_names,
     build_health_watcher,
@@ -36,6 +37,7 @@ from config import (
     migrate_yaml_users,
 )
 from player_watcher import PlayerLogWatcher
+from maintenance_scheduler import MaintenanceScheduler
 from restart_scheduler import RestartWarningScheduler
 from restore_coordinator import RestoreCoordinator
 from scheduler import BackupScheduler
@@ -90,6 +92,8 @@ def create_app(
     archive_verifier=None,
     login_limiter=None,
     client_ip_resolver=None,
+    map_open=None,
+    app_update_checker=None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     if not settings.session_secret:
@@ -128,6 +132,8 @@ def create_app(
     perf = perf_watcher if perf_watcher is not None else build_perf_watcher(settings)
     mod_checker = (mod_update_checker if mod_update_checker is not None
                    else build_mod_update_checker(settings))
+    app_checker = (app_update_checker if app_update_checker is not None
+                   else build_app_update_checker(settings))
     # Même logique d'instance séparée que ci-dessus (cf. build_temp_bans).
     tempban_sched = (
         tempban_scheduler
@@ -143,6 +149,9 @@ def create_app(
         if restart_scheduler is not None
         else RestartWarningScheduler(built_service, settings.restart_poll_seconds)
     )
+    # Même famille et mêmes raisons que le restart scheduler : l'annonce de
+    # maintenance vit en mémoire dans l'unique instance tenue par AdminService.
+    maintenance_sched = MaintenanceScheduler(built_service, settings.restart_poll_seconds)
     # Comme le restart scheduler : l'état (restauration en attente) vit en
     # mémoire dans l'unique instance tenue par AdminService — le thread ne
     # connaît que le service.
@@ -157,11 +166,13 @@ def create_app(
         ("player-watcher", watcher),
         ("tempban-scheduler", tempban_sched),
         ("restart-scheduler", restart_sched),
+        ("maintenance-scheduler", maintenance_sched),
         ("restore-coordinator", restore_coord),
         ("archive-verifier", verifier),
         ("health-watcher", health),
         ("perf-watcher", perf),
         ("mod-update-checker", mod_checker),
+        ("app-update-checker", app_checker),
     )
 
     @asynccontextmanager
@@ -183,6 +194,10 @@ def create_app(
     app.state.roles = roles
     app.state.users_store = users_store
     app.state.service = built_service
+    # Relais borné de la carte web (page Carte) — injectable pour les tests.
+    if map_open is None:
+        from adapters.map_fetch import open_map_path as map_open
+    app.state.map_open = map_open
     password_hasher = hasher if hasher is not None else Argon2Hasher()
     app.state.hasher = password_hasher
     # Même coût de vérification pour un pseudo absent : évite de révéler

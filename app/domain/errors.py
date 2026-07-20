@@ -80,3 +80,9 @@ class RestoreUnavailable(DomainError):
 
 class InvalidGameValue(DomainError):
     """Valeur de réglage de jeu hors liste blanche (difficulté, gamerule…)."""
+
+
+class MaintenanceUnavailable(DomainError):
+    """Mode maintenance non actionnable : portier non configuré/créé, déjà en
+    place, ou impossible à relever proprement (le serveur ne redémarre jamais
+    tant que le portier tient encore son endpoint réseau)."""
