@@ -15,6 +15,7 @@ from domain.model import (
     AlertThresholds,
     AuditEntry,
     ContainerState,
+    Incident,
     MetricReading,
     PerformanceSnapshot,
     ModInfo,
@@ -31,6 +32,22 @@ from domain.model import (
 
 # Format officiel des pseudos Minecraft. Validé avant TOUT envoi RCON.
 
+
+def _corrective_kind(action: str, detail: str) -> str | None:
+    """Genre d'action corrective à corréler à un incident, ou None si l'entrée
+    d'audit n'est pas une intervention pertinente. Ne renvoie QUE le genre —
+    aucun détail technique n'est exposé (barrière STATUS, cf. incidents())."""
+    if action == Permission.RESTART.value:
+        return "restart"
+    if action == Permission.BACKUP_RESTORE.value:
+        return "restore"
+    if action == Permission.MAINTENANCE.value:
+        return "maintenance"
+    if action == Permission.UPDATE.value and "phase=app_update_applied" not in detail:
+        return "update"
+    if action == Permission.BACKUP_TRIGGER.value and "phase=backup_done" in detail:
+        return "backup"
+    return None
 
 
 class MonitoringMixin:
@@ -106,6 +123,42 @@ class MonitoringMixin:
                 if "phase=app_update_applied" not in entry.detail:
                     events.append((entry.timestamp, "update"))
         return events
+
+    def incidents(self, user: User) -> list[tuple[Incident, list[tuple[datetime, str]]]]:
+        """Historique des incidents (chute/dégradation persistées par les
+        watchers) + actions correctives corrélées depuis le journal, chacune
+        étant un couple (instant, genre). Barrière STATUS comme
+        `performance_events` : on n'expose que le genre et l'instant des actions
+        (jamais l'auteur ni le détail technique), la disponibilité n'est pas un
+        secret dans cet outil. Chaque incident vient avec les actions AUDITÉES
+        (redémarrage, sauvegarde, restauration, mise à jour, maintenance)
+        tombant dans sa fenêtre [début, fin ou maintenant]."""
+        self._authorize(user, Permission.STATUS)
+        if self._incidents is None:
+            return []
+        incidents = self._incidents.recent()
+        if not incidents:
+            return []
+        audit = self._audit.recent(self._PERF_EVENT_SCAN_LIMIT)
+        result: list[tuple[Incident, list[tuple[datetime, str]]]] = []
+        for incident in incidents:
+            end = incident.ended_at or self._clock.now()
+            actions: list[tuple[datetime, str]] = []
+            for entry in audit:
+                if entry.outcome != "allowed":
+                    continue
+                kind = _corrective_kind(entry.action, entry.detail)
+                if kind is None:
+                    continue
+                try:
+                    in_window = incident.started_at <= entry.timestamp <= end
+                except TypeError:
+                    continue  # horodatages incompatibles (naïf/aware) : on saute
+                if in_window:
+                    actions.append((entry.timestamp, kind))
+            actions.sort(key=lambda item: item[0])
+            result.append((incident, actions))
+        return result
 
     def player_history(self, user: User) -> list[PlayerSummary]:
         """Temps de jeu cumulé + dernière connexion (même barrière que status).

@@ -1,0 +1,40 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Incidents</h1>
+
+<section class="card">
+  <p class="muted rules-hint">Épisodes d'indisponibilité ou de dégradation
+    détectés automatiquement (serveur ou conteneur arrêté, ralentissement
+    soutenu, espace disque bas), avec leur durée et les actions correctives
+    menées pendant chacun.</p>
+
+  {% if incidents %}
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Historique des incidents</caption>
+      <thead><tr><th>Quand</th><th>Sujet</th><th>Type</th><th>Durée</th><th>Interventions</th></tr></thead>
+      <tbody>
+        {% for i in incidents %}
+        <tr>
+          <td>{{ i.started }}</td>
+          <td><b>{{ i.label }}</b>{% if i.detail %}<div class="muted">{{ i.detail }}</div>{% endif %}</td>
+          <td><span class="chip">{{ i.kind }}</span></td>
+          <td>
+            {% if i.ongoing %}<span class="chip error">en cours · {{ i.duration }}</span>
+            {% else %}{{ i.duration }}{% endif %}
+          </td>
+          <td>
+            {% if i.actions %}
+            {% for a in i.actions %}<span class="chip manual">{{ a.when }} {{ a.label }}</span>{% endfor %}
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Aucun incident enregistré. 🎉</p>
+  {% endif %}
+</section>
+{% endblock %}

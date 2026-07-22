@@ -135,6 +135,7 @@ def _nav_context(request: Request, user, active: str) -> dict:
         "status": "Tableau de bord",
         "console": "Console RCON",
         "performance": "Performances",
+        "incidents": "Incidents",
         "map": "Carte",
         "players": "Joueurs",
         "whitelist": "Whitelist",

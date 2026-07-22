@@ -10,7 +10,7 @@ import unittest
 
 from health_watcher import HealthWatcher
 
-from tests.fakes import FakeContainer, FakeNotifier
+from tests.fakes import FakeContainer, FakeIncidents, FakeNotifier
 
 
 class TestHealthWatcherTick(unittest.TestCase):
@@ -45,6 +45,30 @@ class TestHealthWatcherTick(unittest.TestCase):
         self.watcher._tick()  # rétablissement notifié une seule fois
         self.assertEqual(len(self.notifier.sent), 2)
         self.assertEqual(self.notifier.sent[1][0], "Serveur rétabli")
+
+    def test_incident_opened_on_alert_and_closed_on_recovery(self):
+        incidents = FakeIncidents()
+        watcher = HealthWatcher(self.container, self.notifier, poll_seconds=30,
+                                down_polls_before_alert=2, incidents=incidents)
+        self.container._running = False
+        watcher._tick()
+        watcher._tick()  # seuil atteint : incident ouvert
+        self.assertEqual(incidents.opens, [("server", "availability", "Serveur", "Serveur arrêté")])
+        self.assertEqual(incidents.closes, [])
+        self.container._running = True
+        watcher._tick()  # rétablissement : incident fermé
+        self.assertEqual(incidents.closes, ["server"])
+
+    def test_no_incident_below_threshold(self):
+        incidents = FakeIncidents()
+        watcher = HealthWatcher(self.container, self.notifier, poll_seconds=30,
+                                down_polls_before_alert=3, incidents=incidents)
+        self.container._running = False
+        watcher._tick()  # 1 sonde down, sous le seuil
+        self.container._running = True
+        watcher._tick()
+        self.assertEqual(incidents.opens, [])
+        self.assertEqual(incidents.closes, [])
 
     def test_proxy_error_is_inconclusive(self):
         # Proxy injoignable != serveur down : on ne conclut rien, pas d'alerte.

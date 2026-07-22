@@ -28,13 +28,14 @@ _DISK_MIN_FREE_BYTES = 10 * 1024**3  # 10 Gio
 
 class PerfWatcher:
     def __init__(self, metrics, archives, notifier, poll_seconds: float = 60.0,
-                 mspt_polls_before_alert: int = 3, thresholds=None) -> None:
+                 mspt_polls_before_alert: int = 3, thresholds=None, incidents=None) -> None:
         self._metrics = metrics
         self._archives = archives
         self._notifier = notifier
         self._poll_seconds = poll_seconds
         self._threshold_polls = mspt_polls_before_alert
         self._thresholds = thresholds  # AlertThresholdsPort | None
+        self._incidents = incidents    # IncidentLogPort | None (best-effort)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._wait = self._stop.wait
@@ -89,6 +90,7 @@ class PerfWatcher:
                 self._notifier.notify("Lag serveur terminé",
                                       f"MSPT moyen revenu à {mspt:.1f} ms.",
                                       "info", event="performance")
+                self._record_incident("close", "mspt")
             self._mspt_streak = 0
             self._mspt_alerted = False
             return
@@ -100,7 +102,23 @@ class PerfWatcher:
                 f"MSPT moyen à {mspt:.1f} ms depuis ~{minutes} min (seuil : {mspt_threshold:.0f} ms — "
                 "sous 20 TPS). La page Performances montre les entités en cause.",
                 "warning", event="performance")
+            self._record_incident("open", "mspt", "performance", "Lag serveur",
+                                  f"MSPT {mspt:.0f} ms")
             self._mspt_alerted = True
+
+    def _record_incident(self, action: str, subject: str, kind: str = "",
+                         label: str = "", detail: str = "") -> None:
+        """Persiste la transition (best-effort) : un journal d'incidents
+        indisponible ne casse jamais la surveillance."""
+        if self._incidents is None:
+            return
+        try:
+            if action == "open":
+                self._incidents.open(subject, kind, label, detail)
+            else:
+                self._incidents.close(subject)
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
 
     def _tick_disk(self) -> None:
         try:
@@ -117,8 +135,11 @@ class PerfWatcher:
                     f"{free / 1024**3:.1f} Gio libres sur le volume des sauvegardes "
                     f"(seuil : {disk_threshold / 1024**3:.0f} Gio).",
                     "warning", event="disk")
+                self._record_incident("open", "disk", "disk", "Espace disque",
+                                      f"{free / 1024**3:.1f} Gio libres")
                 self._disk_alerted = True
         elif self._disk_alerted and free > disk_threshold * 1.2:
             self._notifier.notify("Espace disque rétabli",
                                   f"{free / 1024**3:.1f} Gio libres.", "info", event="disk")
+            self._record_incident("close", "disk")
             self._disk_alerted = False

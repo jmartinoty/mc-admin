@@ -507,6 +507,17 @@ class TestTwoFactor(ApiTestBase):
         self.assertFalse(store.is_enabled("jeremy"))
 
 
+class TestIncidentsPage(ApiTestBase):
+    def test_incidents_page_renders_for_status_user(self):
+        self.login("sam", "friend-pw")  # friend a STATUS
+        res = self.client.get("/incidents")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("Incidents", res.text)
+
+    def test_incidents_page_requires_login(self):
+        self.assertEqual(self.client.get("/incidents").status_code, 303)
+
+
 class TestLocalApi(ApiTestBase):
     def _create_token(self, label="dashboard", role="friend"):
         """Crée un jeton via l'UI owner et renvoie son secret (affiché 1 fois)."""

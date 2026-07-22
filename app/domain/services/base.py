@@ -32,6 +32,7 @@ from domain.model import (
 )
 from domain.ports import (
     AuditPort,
+    IncidentLogPort,
     BackupArchivesPort,
     BackupPort,
     BackupProfilesPort,
@@ -173,6 +174,7 @@ class ServiceCore:
         self_image=None,
         storage_history: StorageHistoryPort | None = None,
         alert_thresholds: AlertThresholdsPort | None = None,
+        incidents: IncidentLogPort | None = None,
     ) -> None:
         self._game = game
         self._map_probe = map_probe
@@ -185,6 +187,7 @@ class ServiceCore:
             restore_safety_backup if restore_safety_backup is not None else _NoBackup()
         )
         self._restore = restore
+        self._incidents = incidents
         self._doorman = doorman
         self._pending_maintenance = pending_maintenance
         self._pending_restore = pending_restore

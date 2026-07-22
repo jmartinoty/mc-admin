@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 
 from perf_watcher import PerfWatcher
-from tests.fakes import FakeNotifier
+from tests.fakes import FakeIncidents, FakeNotifier
 
 
 class MetricsStub:
@@ -147,6 +147,29 @@ class TestPerfWatcher(unittest.TestCase):
         self.archives.free = 13 * 1024**3
         self.watcher._tick()
         self.assertEqual(self.notifier.sent[-1][0], "Espace disque rétabli")
+
+    def test_mspt_incident_opened_and_closed(self):
+        incidents = FakeIncidents()
+        watcher = PerfWatcher(self.metrics, self.archives, self.notifier,
+                              poll_seconds=60, mspt_polls_before_alert=2, incidents=incidents)
+        self.metrics.mspt = 80.0
+        watcher._tick()
+        watcher._tick()  # seuil atteint : incident ouvert
+        self.assertEqual([o[:3] for o in incidents.opens], [("mspt", "performance", "Lag serveur")])
+        self.metrics.mspt = 2.0
+        watcher._tick()  # rétablissement : fermé
+        self.assertEqual(incidents.closes, ["mspt"])
+
+    def test_disk_incident_opened_and_closed(self):
+        incidents = FakeIncidents()
+        watcher = PerfWatcher(self.metrics, self.archives, self.notifier,
+                              poll_seconds=60, mspt_polls_before_alert=3, incidents=incidents)
+        self.archives.free = 5 * 1024**3
+        watcher._tick()
+        self.assertEqual([o[0] for o in incidents.opens], ["disk"])
+        self.archives.free = 13 * 1024**3
+        watcher._tick()
+        self.assertEqual(incidents.closes, ["disk"])
 
 
 if __name__ == "__main__":

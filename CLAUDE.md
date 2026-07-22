@@ -1057,6 +1057,26 @@ commençant par les sauvegardes ; « ajouter un serveur » viendra ensuite.
   tailnet ; l'`openapi.json` machine-lisible, lui, reste exploitable hors
   ligne). Endpoints mutants et QR : reportés.
 
+- **Historique des incidents (22/07/2026)** : ✅ implémenté. AUCUNE nouvelle
+  sonde — on rend PERSISTANTES les transitions que `HealthWatcher` et
+  `PerfWatcher` détectaient déjà mais jetaient (notification fire-and-forget).
+  `IncidentLogPort`/`JsonIncidents` (`/data/incidents.json`, schéma
+  `{open: {subject: rec}, history: [...]}`) : les watchers ÉCRIVENT aux points
+  d'alerte (`open`) et de rétablissement (`close`) — observation passive,
+  best-effort (un journal d'incidents en panne ne casse jamais la
+  surveillance), PAS via AdminService (comme PlayerLogWatcher). `open` est
+  idempotent par sujet (une chute déjà ouverte n'en crée pas une 2ᵉ) et
+  l'ADAPTER horodate (clock injectable) — le watcher dit juste « X down/up ».
+  Le SERVICE lit (`AdminService.incidents`, barrière STATUS comme
+  `performance_events`) et CORRÈLE les actions correctives depuis le journal
+  d'audit (restart/restore/backup/update/maintenance tombant dans la fenêtre
+  [début, fin ou maintenant]), n'exposant que le genre + l'instant (jamais
+  l'auteur ni le détail — la disponibilité n'est pas un secret). Deux instances
+  de `JsonIncidents` visent le même fichier (watchers écrivent, service lit),
+  comme `SqlitePlayerHistory`. Page `/incidents` (tous rôles avec STATUS) :
+  durée, « en cours » vs clos, interventions corrélées. Couvre indisponibilité
+  (serveur + compagnons), ralentissement MSPT soutenu, espace disque bas.
+
 ### Roadmap V5.x (consolidations post-V5 — ✅ livrées au fil de l'eau)
 
 - **Page Réglages (`/game`)** : toutes les gamerules du serveur (58 en MC

@@ -1030,6 +1030,27 @@ class FakeWorkerIntegrity:
         return list(self._checks)
 
 
+class FakeIncidents:
+    """IncidentLogPort en mémoire : trace open/close et sert `recent()`."""
+
+    def __init__(self, preset=None):
+        self.opens = []       # (subject, kind, label, detail)
+        self.closes = []      # subject
+        self._open = {}       # subject -> Incident en cours
+        self._recent = list(preset or [])
+
+    def open(self, subject, kind, label, detail=""):
+        self.opens.append((subject, kind, label, detail))
+        self._open[subject] = subject
+
+    def close(self, subject, detail=""):
+        self.closes.append(subject)
+        self._open.pop(subject, None)
+
+    def recent(self, limit=100):
+        return list(self._recent)[:limit]
+
+
 class FakeDoorman:
     """DoormanPort en mémoire. `running` est l'état RÉEL observé (le service
     ne déduit jamais la maintenance d'autre chose que de cette lecture)."""

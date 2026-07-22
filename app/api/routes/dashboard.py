@@ -1065,6 +1065,71 @@ def performance_page(request: Request):
     return templates.TemplateResponse(request, "performance.html", ctx)
 
 
+_INCIDENT_KIND_LABELS = {
+    "availability": "Indisponibilité",
+    "performance": "Ralentissement",
+    "disk": "Espace disque",
+}
+_ACTION_LABELS = {
+    "restart": "Redémarrage",
+    "restore": "Restauration",
+    "backup": "Sauvegarde",
+    "update": "Mise à jour",
+    "maintenance": "Maintenance",
+}
+
+
+def _format_incident_duration(seconds: float) -> str:
+    seconds = int(max(0, seconds))
+    if seconds < 60:
+        return f"{seconds} s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min"
+    hours = minutes // 60
+    rem = minutes % 60
+    if hours < 24:
+        return f"{hours} h {rem:02d}" if rem else f"{hours} h"
+    days = hours // 24
+    return f"{days} j {hours % 24} h"
+
+
+@router.get("/incidents", response_class=HTMLResponse)
+def incidents_page(request: Request):
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        raw = request.app.state.service.incidents(user)
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    ctx = _nav_context(request, user, "incidents")
+    now = datetime.now(timezone.utc)
+    rows = []
+    for incident, actions in raw:
+        end = incident.ended_at or now
+        try:
+            duration = (end - incident.started_at).total_seconds()
+        except TypeError:
+            duration = 0
+        rows.append({
+            "label": incident.label or incident.subject,
+            "kind": _INCIDENT_KIND_LABELS.get(incident.kind, incident.kind),
+            "kind_key": incident.kind,
+            "started": incident.started_at.astimezone().strftime("%d/%m %H:%M"),
+            "ongoing": incident.ended_at is None,
+            "duration": _format_incident_duration(duration),
+            "detail": incident.detail,
+            "actions": [
+                {"when": when.astimezone().strftime("%H:%M"),
+                 "label": _ACTION_LABELS.get(kind, kind)}
+                for when, kind in actions
+            ],
+        })
+    ctx["incidents"] = rows
+    return templates.TemplateResponse(request, "incidents.html", ctx)
+
+
 @router.post("/actions/performance/thresholds")
 def action_set_alert_thresholds(
     request: Request,

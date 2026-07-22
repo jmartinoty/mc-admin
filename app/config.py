@@ -56,6 +56,7 @@ class Settings:
     sessions_file: str = "/data/sessions.json"   # appareils connectés (révocables)
     totp_file: str = "/data/totp.json"           # secrets 2FA (0600)
     api_tokens_file: str = "/data/api_tokens.json"  # jetons API locale (0600)
+    incidents_file: str = "/data/incidents.json"    # historique des incidents
     mc_restore_container: str = ""
     restore_target_file: str = "/data/restore-target"
     mc_doorman_container: str = ""
@@ -142,6 +143,7 @@ class Settings:
             sessions_file=env.get("SESSIONS_FILE", "/data/sessions.json"),
             totp_file=env.get("TOTP_FILE", "/data/totp.json"),
             api_tokens_file=env.get("API_TOKENS_FILE", "/data/api_tokens.json"),
+            incidents_file=env.get("INCIDENTS_FILE", "/data/incidents.json"),
             mc_restore_container=env.get("MC_RESTORE_CONTAINER", ""),
             restore_target_file=env.get("RESTORE_TARGET_FILE", "/data/restore-target"),
             mc_doorman_container=env.get("MC_DOORMAN_CONTAINER", ""),
@@ -361,6 +363,14 @@ def build_watched_store(settings: Settings):
     return store
 
 
+def build_incidents(settings: Settings):
+    """Journal d'incidents persisté. Deux instances (une pour les watchers qui
+    écrivent, une pour le service qui lit) visent le même fichier — l'objet ne
+    garde aucune connexion, comme SqlitePlayerHistory."""
+    from adapters.incidents import JsonIncidents
+    return JsonIncidents(settings.incidents_file)
+
+
 def build_health_watcher(settings: Settings):
     """HealthWatcher (alertes serveur/compagnons down). Toujours actif depuis
     l'A2.3 : l'interrupteur « health » (notifications.json, réglé dans l'UI)
@@ -378,6 +388,7 @@ def build_health_watcher(settings: Settings):
         poll_seconds=settings.health_poll_seconds,
         watched_store=build_watched_store(settings),
         port_factory=DockerProxyContainer,
+        incidents=build_incidents(settings),
     )
 
 
@@ -397,6 +408,7 @@ def build_perf_watcher(settings: Settings):
         FileBackupArchives(settings.backup_archives_dir),
         build_notifications(settings),
         thresholds=JsonAlertThresholds(settings.alert_thresholds_file),
+        incidents=build_incidents(settings),
     )
 
 
@@ -630,6 +642,7 @@ def build_service(settings: Settings):
         worker_integrity=worker_integrity,
         storage_history=JsonStorageHistory(settings.storage_history_file),
         alert_thresholds=JsonAlertThresholds(settings.alert_thresholds_file),
+        incidents=build_incidents(settings),
         backup_profiles=backup_profiles,
         profile_backup=profile_backup,
         world_dir=settings.world_dir,
