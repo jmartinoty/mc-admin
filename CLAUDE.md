@@ -1035,6 +1035,28 @@ commençant par les sauvegardes ; « ajouter un serveur » viendra ensuite.
   saisie manuelle) — un encodeur QR pur-python serait la seule pièce manquante,
   volontairement reportée pour rester sans dépendance.
 
+- **API locale documentée `/api/v1` (22/07/2026)** : ✅ implémenté. Sous-app
+  FastAPI (`app/api/api_v1.py`, `create_api_app`) MONTÉE sous `/api/v1` avec sa
+  propre doc OpenAPI (`/api/v1/docs`, `/api/v1/openapi.json`) — les routes
+  navigateur (HTML) restent hors du schéma. Elle partage les MÊMES objets que
+  l'app parente (service, rôles, jetons) posés sur son `app.state`. Auth par
+  jeton porteur (`Authorization: Bearer`) : `ApiTokenStore`
+  (`app/api/api_tokens.py`, `/data/api_tokens.json`, 0600) stocke le SHA-256 du
+  jeton, jamais le secret (montré une seule fois à la création, comparé en
+  temps constant). Un jeton est lié à un RÔLE existant et se résout en un
+  `User` synthétique (`api:<label>`) → l'API réutilise EXACTEMENT la RBAC et
+  l'audit d'AdminService (pas de logique dupliquée, mêmes barrières que l'UI ;
+  CSRF non applicable — le porteur est explicite, pas un cookie ambiant).
+  Endpoints en LECTURE SEULE (barrière STATUS) : `/ping` (ouvert), `/status`,
+  `/players`, `/metrics`, `/infra`, chacun avec un `response_model` Pydantic.
+  Gestion des jetons : page owner « Jetons d'API » (barrière USER_MANAGE via
+  `authorize_api_tokens`/`record_api_token_change` dans AccountsMixin — le
+  stockage vit en transport comme les sessions, mais RBAC+audit passent par le
+  service ; création/révocation auditées `phase=api_token_created|revoked`,
+  jamais le secret). ⚠️ La doc Swagger UI charge son JS depuis un CDN (OK en
+  tailnet ; l'`openapi.json` machine-lisible, lui, reste exploitable hors
+  ligne). Endpoints mutants et QR : reportés.
+
 ### Roadmap V5.x (consolidations post-V5 — ✅ livrées au fil de l'eau)
 
 - **Page Réglages (`/game`)** : toutes les gamerules du serveur (58 en MC

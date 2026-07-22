@@ -49,6 +49,8 @@
     {% if can_users %}
     <a class="navitem {{ 'active' if active == 'users' }}" href="/users"{% if active == 'users' %} aria-current="page"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20v-.8A5.7 5.7 0 018.2 13.5h1.6a5.7 5.7 0 015.7 5.7v.8"/><path d="M16 3.7a3.5 3.5 0 010 6.8M21.5 20v-.8a5.7 5.7 0 00-4-5.4"/></svg>Comptes</a>
+    <a class="navitem {{ 'active' if active == 'api_tokens' }}" href="/api-tokens"{% if active == 'api_tokens' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M11 12l7-7 3 3M15.5 8.5L18 11"/></svg>Jetons d'API</a>
     {% endif %}
     <div class="sidebar-user">
       <button type="button" class="userbtn" id="userMenuBtn" aria-haspopup="true" aria-expanded="false">

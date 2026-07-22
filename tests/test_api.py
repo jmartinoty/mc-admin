@@ -111,6 +111,10 @@ class ApiTestBase(unittest.TestCase):
         os.close(to_fd)
         os.remove(self.totp_path)  # créé à la demande par le store 2FA
         self.addCleanup(lambda: os.path.exists(self.totp_path) and os.remove(self.totp_path))
+        at_fd, self.api_tokens_path = tempfile.mkstemp(suffix=".json")
+        os.close(at_fd)
+        os.remove(self.api_tokens_path)  # créé à la demande par le store de jetons
+        self.addCleanup(lambda: os.path.exists(self.api_tokens_path) and os.remove(self.api_tokens_path))
 
         settings = Settings(
             rcon_host="minecraft",
@@ -129,6 +133,7 @@ class ApiTestBase(unittest.TestCase):
             users_file=self.users_store_path,
             sessions_file=self.sessions_path,
             totp_file=self.totp_path,
+            api_tokens_file=self.api_tokens_path,
         )
         self.game = FakeGame(players=[Player("alice")], whitelist=["alice", "bob"])
         self.container = FakeContainer(running=True)
@@ -500,6 +505,72 @@ class TestTwoFactor(ApiTestBase):
         self.client.post("/security/disable",
                          data={"current_password": "owner-pw", "csrf_token": token})
         self.assertFalse(store.is_enabled("jeremy"))
+
+
+class TestLocalApi(ApiTestBase):
+    def _create_token(self, label="dashboard", role="friend"):
+        """Crée un jeton via l'UI owner et renvoie son secret (affiché 1 fois)."""
+        self.login("jeremy", "owner-pw")
+        token = self._csrf_from(self.client.get("/api-tokens").text)
+        self.client.post(
+            "/actions/api-tokens/create",
+            data={"label": label, "role": role, "csrf_token": token},
+        )
+        page = self.client.get("/api-tokens").text
+        secret = re.search(r'word-break:break-all">([^<]+)</p>', page).group(1).strip()
+        self.client.post("/logout", data={"csrf_token": self.page_csrf()})
+        return secret
+
+    def test_ping_is_open(self):
+        res = self.client.get("/api/v1/ping")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["ok"], True)
+
+    def test_status_requires_token(self):
+        self.assertEqual(self.client.get("/api/v1/status").status_code, 401)
+        self.assertEqual(
+            self.client.get("/api/v1/status",
+                            headers={"Authorization": "Bearer pas-bon"}).status_code,
+            401,
+        )
+
+    def test_valid_token_reads_status(self):
+        secret = self._create_token(role="friend")
+        res = self.client.get(
+            "/api/v1/status", headers={"Authorization": f"Bearer {secret}"}
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertIn("online", body)
+        self.assertIn("container", body)
+        self.assertEqual(body["container"]["name"], "minecraft")
+
+    def test_token_reads_players_and_metrics(self):
+        secret = self._create_token(role="friend")
+        headers = {"Authorization": f"Bearer {secret}"}
+        self.assertEqual(self.client.get("/api/v1/players", headers=headers).status_code, 200)
+        self.assertEqual(self.client.get("/api/v1/metrics", headers=headers).status_code, 200)
+
+    def test_revoked_token_is_rejected(self):
+        secret = self._create_token(role="friend")
+        headers = {"Authorization": f"Bearer {secret}"}
+        self.assertEqual(self.client.get("/api/v1/status", headers=headers).status_code, 200)
+        # Révocation via l'UI.
+        self.login("jeremy", "owner-pw")
+        token_id = self.app.state.api_tokens.list()[0].token_id
+        token = self._csrf_from(self.client.get("/api-tokens").text)
+        self.client.post("/actions/api-tokens/revoke",
+                         data={"token_id": token_id, "csrf_token": token})
+        self.assertEqual(self.client.get("/api/v1/status", headers=headers).status_code, 401)
+
+    def test_token_management_is_owner_only(self):
+        self.login("paul", "admin-pw")  # admin, pas USER_MANAGE
+        self.assertEqual(self.client.get("/api-tokens").status_code, 403)
+
+    def test_openapi_schema_is_served(self):
+        schema = self.client.get("/api/v1/openapi.json")
+        self.assertEqual(schema.status_code, 200)
+        self.assertIn("/status", schema.json()["paths"])
 
 
 class TestActionsRbac(ApiTestBase):
@@ -2385,6 +2456,7 @@ class TestFirstRunSetup(unittest.TestCase):
             mc_updater_container="mc-updater", ops_file="/nonexistent/ops.json",
             sessions_file=os.path.join(self.dir, "sessions.json"),
             totp_file=os.path.join(self.dir, "totp.json"),
+            api_tokens_file=os.path.join(self.dir, "api_tokens.json"),
         )
         from domain.services import AdminService
         from adapters.restart_schedule import InMemoryRestartSchedule

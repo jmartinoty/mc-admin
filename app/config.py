@@ -55,6 +55,7 @@ class Settings:
     password_store_file: str = "/data/passwords.json"
     sessions_file: str = "/data/sessions.json"   # appareils connectés (révocables)
     totp_file: str = "/data/totp.json"           # secrets 2FA (0600)
+    api_tokens_file: str = "/data/api_tokens.json"  # jetons API locale (0600)
     mc_restore_container: str = ""
     restore_target_file: str = "/data/restore-target"
     mc_doorman_container: str = ""
@@ -140,6 +141,7 @@ class Settings:
             password_store_file=env.get("PASSWORD_STORE_FILE", "/data/passwords.json"),
             sessions_file=env.get("SESSIONS_FILE", "/data/sessions.json"),
             totp_file=env.get("TOTP_FILE", "/data/totp.json"),
+            api_tokens_file=env.get("API_TOKENS_FILE", "/data/api_tokens.json"),
             mc_restore_container=env.get("MC_RESTORE_CONTAINER", ""),
             restore_target_file=env.get("RESTORE_TARGET_FILE", "/data/restore-target"),
             mc_doorman_container=env.get("MC_DOORMAN_CONTAINER", ""),

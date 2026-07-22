@@ -97,6 +97,7 @@ def create_app(
     client_ip_resolver=None,
     session_registry=None,
     totp_store=None,
+    api_token_store=None,
     map_open=None,
     app_update_checker=None,
 ) -> FastAPI:
@@ -243,6 +244,20 @@ def create_app(
     else:
         from adapters.totp_store import JsonTotp
         app.state.totp = JsonTotp(settings.totp_file)
+    if api_token_store is not None:
+        app.state.api_tokens = api_token_store
+    else:
+        from api.api_tokens import ApiTokenStore
+        app.state.api_tokens = ApiTokenStore(settings.api_tokens_file)
+
+    # API locale documentée (/api/v1) : sous-app avec sa propre doc OpenAPI.
+    # Elle partage les MÊMES objets que l'app parente (service, rôles, jetons).
+    from api.api_v1 import create_api_app
+    api_app = create_api_app()
+    api_app.state.service = built_service
+    api_app.state.roles = roles
+    api_app.state.api_tokens = app.state.api_tokens
+    app.mount("/api/v1", api_app)
 
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
