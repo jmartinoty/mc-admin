@@ -19,6 +19,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from api.auth import Argon2Hasher
 from api.login_security import ClientIpResolver, LoginAttemptLimiter
+from api.sessions import SessionRegistry
 from api.routes import router
 from config import (
     Settings,
@@ -94,6 +95,7 @@ def create_app(
     storage_history_watcher=None,
     login_limiter=None,
     client_ip_resolver=None,
+    session_registry=None,
     map_open=None,
     app_update_checker=None,
 ) -> FastAPI:
@@ -229,6 +231,11 @@ def create_app(
         client_ip_resolver
         if client_ip_resolver is not None
         else ClientIpResolver.from_config(settings.login_trusted_proxy_cidrs)
+    )
+    app.state.sessions = (
+        session_registry
+        if session_registry is not None
+        else SessionRegistry(settings.sessions_file)
     )
 
     static_dir = Path(__file__).parent / "static"

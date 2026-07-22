@@ -61,9 +61,53 @@ def flash_error(request: Request, message: str, *, code: str = "", details: str 
 
 # --- helpers d'accès à l'état applicatif (peuplé dans create_app) ---
 
+def _client_ip(request: Request) -> str:
+    """IP observable du client, en passant par le résolveur de confiance
+    (même barrière anti-spoofing que l'anti-bruteforce)."""
+    resolver = getattr(request.app.state, "client_ip_resolver", None)
+    peer_host = request.client.host if request.client is not None else None
+    if resolver is None:
+        return (peer_host or "").strip()
+    return resolver.resolve(peer_host, request.headers.get("x-forwarded-for"))
+
+
+def _register_session(request: Request, username: str) -> None:
+    """Ouvre une session côté serveur et pose son `sid` dans le cookie signé.
+    Appelé au login et au setup — c'est ce qui rend la session révocable."""
+    registry = getattr(request.app.state, "sessions", None)
+    if registry is None:
+        return
+    sid = registry.register(
+        username, _client_ip(request), request.headers.get("user-agent", "")
+    )
+    request.session["sid"] = sid
+
+
 def _current(request: Request):
     username = request.session.get("user")
-    return request.app.state.users.get(username) if username else None
+    if not username:
+        return None
+    user = request.app.state.users.get(username)
+    if user is None:
+        return None
+    registry = getattr(request.app.state, "sessions", None)
+    if registry is None:
+        return user
+    sid = request.session.get("sid")
+    if sid:
+        # Session enrôlée : si son sid a été révoqué (ou a expiré), la session
+        # n'est plus valide — on nettoie le cookie et on déconnecte.
+        if not registry.is_valid(sid, username):
+            request.session.clear()
+            return None
+        registry.touch(sid)
+    else:
+        # Cookie hérité (émis avant cette fonctionnalité) : on l'enrôle À LA
+        # VOLÉE pour qu'il apparaisse et devienne révocable, sans forcer de
+        # reconnexion. Le cookie étant signé, un sid ne peut pas être retiré
+        # pour contourner la révocation.
+        _register_session(request, username)
+    return user
 
 
 def _csrf(request: Request) -> str:
@@ -80,7 +124,7 @@ def _require_csrf(request: Request, token: str) -> None:
 
 
 def _redirect_target(value: str, default: str) -> str:
-    allowed = {"/", "/players", "/whitelist", "/op", "/bans", "/backups", "/audit", "/game"}
+    allowed = {"/", "/players", "/whitelist", "/op", "/bans", "/backups", "/audit", "/game", "/sessions"}
     return value if value in allowed else default
 
 
@@ -104,6 +148,7 @@ def _nav_context(request: Request, user, active: str) -> dict:
         "watch": "Surveillance",
         "servers": "Serveurs",
         "users": "Comptes",
+        "sessions": "Appareils connectés",
     }
     activity_enabled = (
         user.can(Permission.BACKUP_TRIGGER)

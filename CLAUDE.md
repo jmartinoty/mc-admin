@@ -991,6 +991,29 @@ commençant par les sauvegardes ; « ajouter un serveur » viendra ensuite.
   muette, comportement V5 inchangé). Worker testé de bout en bout (fakes) ;
   reste à exercer le flux APP complet en réel.
 
+- **Sessions utilisateur — appareils connectés (22/07/2026)** : ✅ implémenté.
+  `SessionRegistry` (`app/api/sessions.py`) vit dans la couche TRANSPORT, comme
+  `login_security.py` — le domaine ignore les sessions HTTP (détail d'auth, pas
+  de règle métier) : ni port, ni `Permission`, ni audit domaine (cohérent avec
+  les autres actions self-service login/logout/mot de passe). Un `sid` opaque
+  (`secrets.token_urlsafe`) par connexion est posé dans le cookie signé au
+  login/setup et VALIDÉ à chaque requête par `_current` (sid absent du registre
+  = révoqué → déconnexion). Cookies hérités (émis avant la fonctionnalité)
+  enrôlés à la volée dans `_current` — aucune reconnexion forcée ; le cookie
+  étant signé, un `sid` ne peut pas être retiré pour contourner la révocation.
+  **Registre PERSISTÉ** (`/data/sessions.json`, 0600, primitives `atomic_json`)
+  et non pas seulement en mémoire : autoritatif en mémoire pour la validation
+  rapide (pas d'I/O sous le polling), write-through sur mutations (register/
+  logout/revoke). Conséquence VOULUE, distincte des `InMemory*` : la révocation
+  survit à un redéploiement de mc-admin ET personne n'est déconnecté en masse
+  au redémarrage. Le « dernier accès » reste en mémoire (best-effort, purement
+  cosmétique). Self-service : page « Appareils connectés » (popover profil),
+  révoquer un appareil ou « tous les autres » ; `revoke()` exige le `username`
+  (on ne touche jamais la session d'autrui). TTL 14 j (aligné sur le cookie),
+  plafond par utilisateur (anti-gonflement). ⚠️ Comme tout l'état à copie
+  mémoire autoritative, ceci suppose UN SEUL worker uvicorn (déjà une
+  contrainte du projet).
+
 ### Roadmap V5.x (consolidations post-V5 — ✅ livrées au fil de l'eau)
 
 - **Page Réglages (`/game`)** : toutes les gamerules du serveur (58 en MC

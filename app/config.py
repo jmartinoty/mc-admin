@@ -53,6 +53,7 @@ class Settings:
     restart_poll_seconds: float = 2.0
     display_names_file: str = "/data/display_names.json"
     password_store_file: str = "/data/passwords.json"
+    sessions_file: str = "/data/sessions.json"   # appareils connectés (révocables)
     mc_restore_container: str = ""
     restore_target_file: str = "/data/restore-target"
     mc_doorman_container: str = ""
@@ -136,6 +137,7 @@ class Settings:
             restart_poll_seconds=float(env.get("RESTART_POLL_SECONDS", "2")),
             display_names_file=env.get("DISPLAY_NAMES_FILE", "/data/display_names.json"),
             password_store_file=env.get("PASSWORD_STORE_FILE", "/data/passwords.json"),
+            sessions_file=env.get("SESSIONS_FILE", "/data/sessions.json"),
             mc_restore_container=env.get("MC_RESTORE_CONTAINER", ""),
             restore_target_file=env.get("RESTORE_TARGET_FILE", "/data/restore-target"),
             mc_doorman_container=env.get("MC_DOORMAN_CONTAINER", ""),

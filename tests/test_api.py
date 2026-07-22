@@ -102,6 +102,10 @@ class ApiTestBase(unittest.TestCase):
         os.close(us_fd)
         os.remove(self.users_store_path)  # créé à la demande par l'adapter
         self.addCleanup(lambda: os.path.exists(self.users_store_path) and os.remove(self.users_store_path))
+        se_fd, self.sessions_path = tempfile.mkstemp(suffix=".json")
+        os.close(se_fd)
+        os.remove(self.sessions_path)  # créé à la demande par le registre
+        self.addCleanup(lambda: os.path.exists(self.sessions_path) and os.remove(self.sessions_path))
 
         settings = Settings(
             rcon_host="minecraft",
@@ -118,6 +122,7 @@ class ApiTestBase(unittest.TestCase):
             mc_updater_container="mc-updater",
             ops_file="/nonexistent/ops.json",
             users_file=self.users_store_path,
+            sessions_file=self.sessions_path,
         )
         self.game = FakeGame(players=[Player("alice")], whitelist=["alice", "bob"])
         self.container = FakeContainer(running=True)
@@ -268,6 +273,7 @@ class ApiTestBase(unittest.TestCase):
             map_open=self.fake_map_open,
             app_update_checker=FakeBackgroundTask(),
         )
+        self.app = app
         self.client = TestClient(app, follow_redirects=False)
 
     # -- helpers --
@@ -357,6 +363,62 @@ class TestAuthFlow(ApiTestBase):
         token = self.page_csrf()
         self.assertEqual(self.client.post("/logout", data={"csrf_token": token}).status_code, 303)
         self.assertEqual(self.client.get("/").status_code, 303)  # de nouveau anonyme
+
+
+class TestSessions(ApiTestBase):
+    def _second_device(self):
+        return TestClient(self.app, follow_redirects=False)
+
+    def _csrf_from_page(self, client, path="/"):
+        return self._csrf_from(client.get(path).text)
+
+    def _login_on(self, client, username, password):
+        token = self._csrf_from(client.get("/login").text)
+        return client.post(
+            "/login",
+            data={"username": username, "password": password, "csrf_token": token},
+        )
+
+    def test_sessions_page_lists_current_device(self):
+        self.login("paul", "admin-pw")
+        page = self.client.get("/sessions")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Appareils connectés", page.text)
+        self.assertIn("cet appareil", page.text)
+
+    def test_revoking_other_device_logs_it_out(self):
+        # Deux « appareils » (deux jeux de cookies) connectés au même compte.
+        self.login("paul", "admin-pw")
+        other = self._second_device()
+        self._login_on(other, "paul", "admin-pw")
+        self.assertEqual(other.get("/").status_code, 200)  # l'autre est bien connecté
+        # Deux sessions visibles depuis le 1er appareil.
+        self.assertEqual(self.client.get("/sessions").text.count('name="sid"'), 2)
+
+        # « Déconnecter tous les autres appareils » depuis le 1er.
+        token = self._csrf_from_page(self.client, "/sessions")
+        res = self.client.post("/actions/sessions/revoke-others", data={"csrf_token": token})
+        self.assertEqual(res.status_code, 303)
+
+        # L'autre appareil est déconnecté ; le nôtre reste connecté.
+        self.assertEqual(other.get("/").status_code, 303)
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_revoking_own_current_session_logs_out(self):
+        self.login("paul", "admin-pw")
+        page = self.client.get("/sessions").text
+        import re as _re
+        sid = _re.search(r'name="sid" value="([^"]+)"', page).group(1)
+        token = self._csrf_from_page(self.client, "/sessions")
+        res = self.client.post(
+            "/actions/sessions/revoke", data={"sid": sid, "csrf_token": token}
+        )
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(res.headers["location"], "/login")
+        self.assertEqual(self.client.get("/").status_code, 303)  # déconnecté
+
+    def test_sessions_page_requires_login(self):
+        self.assertEqual(self.client.get("/sessions").status_code, 303)
 
 
 class TestActionsRbac(ApiTestBase):
@@ -2240,6 +2302,7 @@ class TestFirstRunSetup(unittest.TestCase):
             cookie_secure=False, prometheus_url="http://prom:9090",
             metrics_config="/nonexistent/metrics.yml",
             mc_updater_container="mc-updater", ops_file="/nonexistent/ops.json",
+            sessions_file=os.path.join(self.dir, "sessions.json"),
         )
         from domain.services import AdminService
         from adapters.restart_schedule import InMemoryRestartSchedule
