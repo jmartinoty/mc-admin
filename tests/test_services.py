@@ -42,6 +42,7 @@ from tests.fakes import (
     FakeArchiveValidator,
     FakeBackup,
     FakeContainer,
+    FakeDoorman,
     FakeGame,
     FakeLogs,
     FakeMetrics,
@@ -123,6 +124,7 @@ class ServiceTestBase(unittest.TestCase):
         self.temp_bans = FakeTempBans()
         self.restart_schedule = InMemoryRestartSchedule()
         self.restore = FakeRestore()
+        self.doorman = FakeDoorman()
         self.pending_restore = InMemoryPendingRestore()
         self.player_stats = FakePlayerStats()
         self.service = AdminService(
@@ -145,6 +147,7 @@ class ServiceTestBase(unittest.TestCase):
             restart_schedule=self.restart_schedule,
             restore=self.restore,
             restore_safety_backup=self.backup,
+            doorman=self.doorman,
             pending_restore=self.pending_restore,
             player_stats=self.player_stats,
             archive_checks=self.archive_checks,
@@ -867,6 +870,20 @@ class TestRestore(ServiceTestBase):
         self.assertEqual(self.restore.calls, [self.ARCHIVE])
         self.assertIsNone(self.pending_restore.get())
         self.assertIn("phase=restore_started", self.audit.entries[-1].detail)
+        # V7b : la consigne « restauration » du portier est amorcée AVANT le
+        # lancement du worker (qui prendra le poste), sans le démarrer ici.
+        self.assertEqual(len(self.doorman.primed), 1)
+        self.assertIn("Restauration", self.doorman.primed[0][0])
+        self.assertFalse(self.doorman.running)
+
+    def test_doorman_priming_failure_never_blocks_restore(self):
+        # Un portier indisponible ne doit jamais empêcher une restauration :
+        # le priming est best-effort.
+        self.doorman.prime = lambda motd, kick: (_ for _ in ()).throw(RuntimeError("KO"))
+        self.service.restore_backup(self.owner, self.ARCHIVE)
+        self.backup.running = False
+        self.assertEqual(self.service.tick_pending_restore(self.owner), "restored")
+        self.assertEqual(self.restore.calls, [self.ARCHIVE])
 
     def test_tick_aborts_when_security_backup_exits_with_error(self):
         self.service.restore_backup(self.owner, self.ARCHIVE)

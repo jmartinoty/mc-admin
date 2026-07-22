@@ -255,6 +255,11 @@ services:
     command: []
     environment:
       MC_CONTAINER_NAME: "minecraft"
+      # V7b — le worker fait tenir l'adresse par le portier pendant l'arrêt du
+      # serveur (MOTD « restauration » au lieu d'un « connexion refusée » brut).
+      # Vide = restauration muette comme avant. La consigne est écrite par
+      # mc-admin avant le lancement ; le worker ne fait que démarrer/arrêter.
+      MC_DOORMAN_CONTAINER: "mc-doorman"
       RESTORE_TARGET_FILE: "/restore/restore-target"
       BACKUPS_ROOT: "/backups"
       MC_DATA_ROOT: "/worlddata"

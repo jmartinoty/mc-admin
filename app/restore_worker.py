@@ -591,6 +591,126 @@ class DockerContainerController:
             self._sleep(self._poll_interval)
 
 
+class DoormanController:
+    """Pilote le conteneur portier `mc-doorman` via docker-py, DANS le worker.
+
+    Pendant que Minecraft est arrêté par la restauration, le portier tient son
+    endpoint réseau et répond aux joueurs (MOTD « restauration », refus de
+    connexion expliqué) au lieu d'un « connexion refusée » brut. La consigne a
+    été écrite par mc-admin AVANT le lancement de mc-restore (pattern
+    restore-target) : le worker ne fait que démarrer/arrêter le conteneur.
+
+    Contrainte structurante (compose) : `minecraft` et `mc-doorman` se disputent
+    la même IP statique et ne peuvent JAMAIS tourner ensemble. `release()`
+    attend donc la libération EFFECTIVE de l'adresse avant de rendre la main —
+    sans quoi le redémarrage de Minecraft échouerait sur un conflit d'adresse.
+    """
+
+    def __init__(
+        self,
+        container_name: str,
+        client=None,
+        *,
+        release_timeout: float = 15.0,
+        poll_interval: float = 0.5,
+        sleep=None,
+        monotonic=None,
+    ) -> None:
+        if not _CONTAINER_NAME_RE.fullmatch(container_name):
+            raise RestoreWorkerError("nom de conteneur portier invalide")
+        if release_timeout <= 0 or poll_interval <= 0:
+            raise RestoreWorkerError("délais du portier invalides")
+        self._name = container_name
+        if client is None:
+            import docker
+
+            client = docker.from_env()
+        self._client = client
+        self._release_timeout = release_timeout
+        self._poll_interval = poll_interval
+        self._sleep = sleep or time.sleep
+        self._monotonic = monotonic or time.monotonic
+
+    def _container(self):
+        container = self._client.containers.get(self._name)
+        actual = str(getattr(container, "name", "")).removeprefix("/")
+        if actual != self._name:
+            raise RestoreWorkerError("le conteneur portier résolu ne correspond pas à la cible")
+        return container
+
+    def engage(self) -> None:
+        container = self._container()
+        container.reload()
+        if getattr(container, "status", None) != "running":
+            container.start()
+
+    def release(self) -> None:
+        try:
+            container = self._container()
+        except RestoreWorkerError:
+            raise
+        except Exception:  # noqa: BLE001 — aucun conteneur portier = rien ne tient l'adresse
+            return
+        container.reload()
+        if getattr(container, "status", None) == "running":
+            container.stop(timeout=10)
+        deadline = self._monotonic() + self._release_timeout
+        while True:
+            try:
+                container = self._container()
+                container.reload()
+            except RestoreWorkerError:
+                raise
+            except Exception:  # noqa: BLE001 — disparu entre-temps = adresse libérée
+                return
+            if getattr(container, "status", None) != "running":
+                return
+            if self._monotonic() >= deadline:
+                raise RestoreWorkerError(
+                    "le portier ne libère pas l'adresse du serveur — "
+                    "redémarrage de Minecraft impossible sans intervention"
+                )
+            self._sleep(self._poll_interval)
+
+
+class DoormanAwareController:
+    """Enveloppe le contrôleur Minecraft pour que le portier couvre CHAQUE
+    fenêtre où Minecraft est volontairement arrêté par la transaction — sans
+    toucher à la logique de restauration : les ~8 appels `stop()`/`start()` du
+    worker (chemins nominal, rollback ET reprise) sont instrumentés d'un seul
+    geste.
+
+    L'ORDRE est imposé par l'IP partagée :
+      - `stop()`  : on arrête Minecraft, PUIS le portier prend le poste. Sa
+        prise de poste est BEST-EFFORT — un portier absent dégrade seulement le
+        message vu par les joueurs, il ne doit jamais faire échouer une
+        restauration en cours (ni son rollback).
+      - `start()` : on relève le portier (OBLIGATOIRE — sinon conflit
+        d'adresse), PUIS on démarre Minecraft. Relever un portier absent est un
+        no-op : c'est aussi ce qui nettoie un portier resté en poste après une
+        interruption, rendant la reprise plus robuste qu'avant.
+    """
+
+    def __init__(self, minecraft, doorman) -> None:
+        self._minecraft = minecraft
+        self._doorman = doorman
+
+    def stop(self) -> None:
+        self._minecraft.stop()
+        try:
+            self._doorman.engage()
+        except Exception as exc:  # noqa: BLE001 — portier = confort, jamais bloquant
+            print(
+                f"[restore] portier non pris en poste (sans gravité) : {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def start(self) -> None:
+        self._doorman.release()
+        self._minecraft.start()
+
+
 def main() -> int:
     try:
         startup_timeout = float(
@@ -600,6 +720,13 @@ def main() -> int:
             os.environ.get("MC_CONTAINER_NAME", "minecraft"),
             startup_timeout=startup_timeout,
         )
+        doorman_name = os.environ.get("MC_DOORMAN_CONTAINER", "").strip()
+        if doorman_name:
+            # Portier présent : il couvre les fenêtres d'arrêt de la
+            # restauration. Absent (env vide) = comportement V5 inchangé.
+            controller = DoormanAwareController(
+                controller, DoormanController(doorman_name)
+            )
         restore_transaction(
             Path(os.environ.get("RESTORE_TARGET_FILE", "/restore/restore-target")),
             Path(os.environ.get("BACKUPS_ROOT", "/backups")),

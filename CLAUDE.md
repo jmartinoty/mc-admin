@@ -973,9 +973,23 @@ commençant par les sauvegardes ; « ajouter un serveur » viendra ensuite.
 - **Vérifié en réel le 20/07** : portier lancé dans le vrai réseau `mc_playit`
   et interrogé par un client parlant le protocole — MOTD correct, ping/pong
   renvoyé, refus au login avec le message de la consigne.
-- **RESTE À FAIRE** : portier automatique pendant une restauration
-  (`docs/roadmap.md` n° 7b) — délibérément séparé, le worker a 8 points
-  d'arrêt/démarrage et mérite sa propre itération testée.
+- **Portier automatique pendant une restauration (V7b, 22/07/2026)** : ✅
+  implémenté. `restore_worker.py` enveloppe son contrôleur Minecraft dans
+  `DoormanAwareController` : `stop()` arrête le serveur PUIS engage le portier
+  (best-effort — un portier absent dégrade seulement le message, jamais la
+  restauration), `start()` RELÈVE le portier (obligatoire, sinon conflit
+  d'IP) PUIS démarre Minecraft. Les ~8 points stop/start du worker (nominal,
+  rollback, reprise) sont couverts d'un seul geste, SANS toucher à la logique
+  transactionnelle — et la reprise gagne un garde-fou : un portier resté en
+  poste après un crash est désormais relevé avant le redémarrage.
+  `DoormanController` pilote mc-doorman via docker-py (le worker a déjà le
+  socket) ; `release()` tolère un portier inexistant (rien ne tient l'adresse)
+  mais lève si un portier VIVANT refuse de rendre l'IP. La consigne
+  « restauration » est amorcée par mc-admin (`DoormanPort.prime()` — écrit la
+  consigne sans démarrer) dans `_start_restore_after_backup`, best-effort.
+  Env `MC_DOORMAN_CONTAINER` sur le conteneur mc-restore (vide = restauration
+  muette, comportement V5 inchangé). Worker testé de bout en bout (fakes) ;
+  reste à exercer le flux APP complet en réel.
 
 ### Roadmap V5.x (consolidations post-V5 — ✅ livrées au fil de l'eau)
 

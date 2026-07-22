@@ -13,6 +13,8 @@ from types import SimpleNamespace
 import restore_worker
 from restore_worker import (
     DockerContainerController,
+    DoormanAwareController,
+    DoormanController,
     RestoreWorkerError,
     restore_transaction,
 )
@@ -142,6 +144,24 @@ class TestRestoreWorker(unittest.TestCase):
         self.assertEqual((self.data / "ops.json").stat().st_ino, ops_inode)
         self.assertEqual((self.data / "logs").stat().st_ino, logs_inode)
         self.assertEqual((self.data / "old_world_1").stat().st_ino, world_inode)
+        self._assert_transaction_clean()
+
+    def test_transaction_complete_engage_puis_releve_le_portier(self):
+        # Bout-en-bout à travers le contrôleur enveloppé : le portier prend le
+        # poste quand le serveur s'arrête, et le rend AVANT le redémarrage.
+        minecraft = FakeController()
+        doorman = _RecordingDoorman()
+        controller = DoormanAwareController(minecraft, doorman)
+
+        restored = restore_transaction(
+            self.target, self.backups, self.data, controller
+        )
+
+        self.assertEqual(restored, "manual/world.tar.gz")
+        self.assertEqual(minecraft.events, ["stop", "start"])
+        # Portier engagé pendant l'arrêt, relevé avant le redémarrage.
+        self.assertEqual(doorman.events, ["engage", "release"])
+        self.assertTrue(minecraft.running)
         self._assert_transaction_clean()
 
     def test_corrupt_archive_never_stops_minecraft(self):
@@ -371,6 +391,140 @@ class TestDockerContainerController(unittest.TestCase):
 
         with self.assertRaisesRegex(RestoreWorkerError, "délai"):
             self._controller(container, clock, timeout=2).start()
+
+
+class _RecordingDoorman:
+    """Portier factice : trace engage/release et peut simuler des échecs."""
+
+    def __init__(self, *, engage_error=None, release_error=None):
+        self.events: list[str] = []
+        self._engage_error = engage_error
+        self._release_error = release_error
+
+    def engage(self):
+        self.events.append("engage")
+        if self._engage_error:
+            raise self._engage_error
+
+    def release(self):
+        self.events.append("release")
+        if self._release_error:
+            raise self._release_error
+
+
+class TestDoormanAwareController(unittest.TestCase):
+    def test_stop_arrete_minecraft_puis_prend_le_poste(self):
+        minecraft = FakeController()
+        doorman = _RecordingDoorman()
+
+        DoormanAwareController(minecraft, doorman).stop()
+
+        # Ordre imposé par l'IP partagée : le serveur libère l'adresse AVANT
+        # que le portier ne la prenne.
+        self.assertEqual(minecraft.events, ["stop"])
+        self.assertEqual(doorman.events, ["engage"])
+        self.assertFalse(minecraft.running)
+
+    def test_start_releve_le_portier_puis_demarre_minecraft(self):
+        minecraft = FakeController()
+        minecraft.running = False
+        doorman = _RecordingDoorman()
+
+        DoormanAwareController(minecraft, doorman).start()
+
+        self.assertEqual(doorman.events, ["release"])
+        self.assertEqual(minecraft.events, ["start"])
+        self.assertTrue(minecraft.running)
+
+    def test_portier_absent_ne_bloque_pas_la_restauration(self):
+        # Un portier qui ne prend pas son poste ne doit jamais faire échouer un
+        # arrêt : c'est un confort, pas une barrière.
+        minecraft = FakeController()
+        doorman = _RecordingDoorman(engage_error=RuntimeError("portier KO"))
+
+        DoormanAwareController(minecraft, doorman).stop()  # ne lève pas
+
+        self.assertFalse(minecraft.running)
+        self.assertEqual(doorman.events, ["engage"])
+
+    def test_portier_qui_ne_se_releve_pas_empeche_le_redemarrage(self):
+        # À l'inverse : tant que le portier tient l'adresse, on NE démarre PAS
+        # Minecraft (sinon conflit d'IP) — l'échec doit remonter.
+        minecraft = FakeController()
+        minecraft.running = False
+        doorman = _RecordingDoorman(
+            release_error=RestoreWorkerError("le portier ne libère pas l'adresse")
+        )
+
+        with self.assertRaisesRegex(RestoreWorkerError, "libère pas"):
+            DoormanAwareController(minecraft, doorman).start()
+
+        self.assertEqual(minecraft.events, [])  # Minecraft jamais démarré
+
+
+class TestDoormanControllerRelease(unittest.TestCase):
+    def _controller(self, container, clock, *, timeout=6):
+        client = SimpleNamespace(
+            containers=SimpleNamespace(get=lambda name: container)
+        )
+        return DoormanController(
+            "mc-doorman",
+            client,
+            release_timeout=timeout,
+            poll_interval=1,
+            sleep=clock.sleep,
+            monotonic=clock,
+        )
+
+    def test_release_attend_la_liberation_effective(self):
+        container = FakeDockerContainer([("exited", None)])
+        container.name = "mc-doorman"
+        container.status = "running"
+
+        def stop(timeout=None):
+            container.status = "exited"
+
+        container.stop = stop
+        clock = FakeMonotonic()
+
+        self._controller(container, clock).release()  # ne lève pas
+
+    def test_release_leve_si_le_portier_ne_lache_pas_ladresse(self):
+        container = FakeDockerContainer([("running", None)])
+        container.name = "mc-doorman"
+        container.status = "running"
+        container.reload = lambda: None  # reste running
+        container.stop = lambda timeout=None: None
+        clock = FakeMonotonic()
+
+        with self.assertRaisesRegex(RestoreWorkerError, "libère pas"):
+            self._controller(container, clock, timeout=3).release()
+
+    def test_release_tolere_un_portier_inexistant(self):
+        # MC_DOORMAN_CONTAINER défini mais conteneur jamais créé : rien ne tient
+        # l'adresse, release() est un no-op (ne doit pas bloquer le démarrage).
+        def missing(name):
+            raise RuntimeError("No such container: mc-doorman")
+
+        client = SimpleNamespace(containers=SimpleNamespace(get=missing))
+        controller = DoormanController(
+            "mc-doorman", client, sleep=lambda s: None, monotonic=lambda: 0.0
+        )
+
+        controller.release()  # ne lève pas
+
+    def test_nom_de_conteneur_resolu_incoherent_est_refuse(self):
+        container = FakeDockerContainer([])
+        container.name = "autre-conteneur"
+        client = SimpleNamespace(
+            containers=SimpleNamespace(get=lambda name: container)
+        )
+        controller = DoormanController(
+            "mc-doorman", client, sleep=lambda s: None, monotonic=lambda: 0.0
+        )
+
+        with self.assertRaisesRegex(RestoreWorkerError, "ne correspond pas"):
+            controller.release()
 
 
 if __name__ == "__main__":

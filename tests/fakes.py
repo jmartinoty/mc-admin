@@ -1040,6 +1040,7 @@ class FakeDoorman:
         self.fail_release = fail_release
         self.status_fail = False       # is_running() lève (proxy injoignable)
         self.consignes = []            # (motd, kick) de chaque prise de poste
+        self.primed = []               # (motd, kick) amorcés sans prise de poste (V7b)
         self.releases = 0
 
     def engage(self, motd: str, kick: str) -> None:
@@ -1058,3 +1059,8 @@ class FakeDoorman:
         if self.status_fail:
             raise MaintenanceUnavailable("état du portier illisible")
         return self.running
+
+    def prime(self, motd: str, kick: str) -> None:
+        # Amorce la consigne sans démarrer le portier (V7b) : le worker
+        # mc-restore prendra le poste lui-même pendant l'arrêt du serveur.
+        self.primed.append((motd, kick))
