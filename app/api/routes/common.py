@@ -149,6 +149,7 @@ def _nav_context(request: Request, user, active: str) -> dict:
         "servers": "Serveurs",
         "users": "Comptes",
         "sessions": "Appareils connectés",
+        "security": "Sécurité",
     }
     activity_enabled = (
         user.can(Permission.BACKUP_TRIGGER)

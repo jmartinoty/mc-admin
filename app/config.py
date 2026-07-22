@@ -54,6 +54,7 @@ class Settings:
     display_names_file: str = "/data/display_names.json"
     password_store_file: str = "/data/passwords.json"
     sessions_file: str = "/data/sessions.json"   # appareils connectés (révocables)
+    totp_file: str = "/data/totp.json"           # secrets 2FA (0600)
     mc_restore_container: str = ""
     restore_target_file: str = "/data/restore-target"
     mc_doorman_container: str = ""
@@ -138,6 +139,7 @@ class Settings:
             display_names_file=env.get("DISPLAY_NAMES_FILE", "/data/display_names.json"),
             password_store_file=env.get("PASSWORD_STORE_FILE", "/data/passwords.json"),
             sessions_file=env.get("SESSIONS_FILE", "/data/sessions.json"),
+            totp_file=env.get("TOTP_FILE", "/data/totp.json"),
             mc_restore_container=env.get("MC_RESTORE_CONTAINER", ""),
             restore_target_file=env.get("RESTORE_TARGET_FILE", "/data/restore-target"),
             mc_doorman_container=env.get("MC_DOORMAN_CONTAINER", ""),

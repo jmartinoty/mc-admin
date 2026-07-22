@@ -8,6 +8,7 @@ import time
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from api import totp
 from api.auth import authenticate
 from api.routes.common import (
     _csrf,
@@ -372,12 +373,67 @@ def login(
             {"csrf_token": _csrf(request), "error": "Identifiants invalides"},
             status_code=401,
         )
+    totp_store = getattr(request.app.state, "totp", None)
+    if totp_store is not None and totp_store.is_enabled(user.username):
+        # Mot de passe correct MAIS 2FA active : on ne connecte pas encore. On
+        # ne résout pas l'essai (cancel, pas success) — le 2e facteur reste dû,
+        # et un mot de passe correct ne doit pas relâcher le compteur d'échecs
+        # tant que l'authentification n'est pas complète.
+        request.app.state.login_limiter.cancel(attempt)
+        request.session["pending_2fa"] = {
+            "user": user.username,
+            "exp": time.time() + _PENDING_2FA_TTL_SECONDS,
+        }
+        return templates.TemplateResponse(
+            request, "login_totp.html", {"csrf_token": _csrf(request), "error": None}
+        )
     request.app.state.login_limiter.success(attempt)
+    return _complete_login(request, user.username)
+
+
+_PENDING_2FA_TTL_SECONDS = 300
+
+
+def _complete_login(request: Request, username: str):
     # Anti-fixation de session : on repart d'une session propre après login.
     request.session.clear()
-    request.session["user"] = user.username
-    _register_session(request, user.username)  # session révocable (appareils)
+    request.session["user"] = username
+    _register_session(request, username)  # session révocable (appareils)
     return RedirectResponse("/", status_code=303)
+
+
+@router.post("/login/verify")
+def login_verify(request: Request, code: str = Form(...), csrf_token: str = Form(...)):
+    _require_csrf(request, csrf_token)
+    pending = request.session.get("pending_2fa")
+    if not isinstance(pending, dict) or pending.get("exp", 0) < time.time():
+        request.session.pop("pending_2fa", None)
+        return RedirectResponse("/login", status_code=303)
+    username = pending.get("user") or ""
+    peer_host = request.client.host if request.client is not None else None
+    client_ip = request.app.state.client_ip_resolver.resolve(
+        peer_host, request.headers.get("x-forwarded-for")
+    )
+    attempt = request.app.state.login_limiter.begin(client_ip, username)
+    if attempt is None:
+        return templates.TemplateResponse(
+            request,
+            "login_totp.html",
+            {"csrf_token": _csrf(request), "error": "Trop de tentatives — réessaie dans quelques minutes."},
+            status_code=429,
+        )
+    secret = request.app.state.totp.secret(username) or ""
+    if totp.verify(secret, code):
+        request.app.state.login_limiter.success(attempt)
+        request.session.pop("pending_2fa", None)
+        return _complete_login(request, username)
+    request.app.state.login_limiter.failure(attempt)
+    return templates.TemplateResponse(
+        request,
+        "login_totp.html",
+        {"csrf_token": _csrf(request), "error": "Code invalide"},
+        status_code=401,
+    )
 
 
 @router.post("/logout")
@@ -565,3 +621,98 @@ def action_revoke_other_sessions(request: Request, csrf_token: str = Form(...)):
         else "Aucun autre appareil connecté."
     )
     return RedirectResponse("/sessions", status_code=303)
+
+
+# --- double authentification (2FA / TOTP, self-service) ---
+
+
+def _verify_own_password(request: Request, user, password: str) -> bool:
+    hasher = request.app.state.hasher
+    current_hash = request.app.state.password_overrides.get(user.username)
+    return bool(current_hash and hasher.verify(current_hash, password))
+
+
+@router.get("/security", response_class=HTMLResponse)
+def security_page(request: Request):
+    from api.routes.common import _nav_context  # local : évite un cycle d'import
+
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    store = getattr(request.app.state, "totp", None)
+    context = _nav_context(request, user, "security")
+    context["twofa_enabled"] = bool(store and store.is_enabled(user.username))
+    context["twofa_pending"] = bool(store and store.has_pending(user.username))
+    if store is not None and store.has_pending(user.username) and not context["twofa_enabled"]:
+        secret = store.secret(user.username) or ""
+        context["twofa_secret"] = totp.format_secret(secret)
+        context["twofa_uri"] = totp.provisioning_uri(secret, user.username)
+    return templates.TemplateResponse(request, "security.html", context)
+
+
+@router.post("/security/start")
+def security_start(request: Request, csrf_token: str = Form(...)):
+    """Génère un secret (non confirmé) à scanner. Sans effet si la 2FA est déjà
+    active — on ne remplace pas un secret qui marche par un non confirmé."""
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    store = request.app.state.totp
+    if not store.is_enabled(user.username):
+        store.set_pending(user.username, totp.generate_secret())
+    return RedirectResponse("/security", status_code=303)
+
+
+@router.post("/security/enable")
+def security_enable(request: Request, code: str = Form(...), csrf_token: str = Form(...)):
+    """Confirme le secret en attente avec un premier code : à partir de là, un
+    code sera demandé à chaque connexion."""
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    store = request.app.state.totp
+    secret = store.secret(user.username) if store.has_pending(user.username) else None
+    if not secret:
+        request.session["flash"] = "Commence par générer un secret."
+    elif totp.verify(secret, code):
+        store.confirm(user.username)
+        request.session["flash"] = "Double authentification activée."
+    else:
+        request.session["flash"] = "Code invalide — vérifie l'heure de ton téléphone et réessaie."
+    return RedirectResponse("/security", status_code=303)
+
+
+@router.post("/security/cancel")
+def security_cancel(request: Request, csrf_token: str = Form(...)):
+    """Abandonne une configuration en cours (secret non confirmé)."""
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    store = request.app.state.totp
+    if store.has_pending(user.username) and not store.is_enabled(user.username):
+        store.remove(user.username)
+    return RedirectResponse("/security", status_code=303)
+
+
+@router.post("/security/disable")
+def security_disable(
+    request: Request,
+    current_password: str = Form(...),
+    csrf_token: str = Form(...),
+):
+    """Désactive la 2FA — exige le mot de passe actuel (défense : personne ne
+    doit pouvoir la retirer depuis une session laissée ouverte)."""
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    store = request.app.state.totp
+    if not _verify_own_password(request, user, current_password):
+        request.session["flash"] = "Mot de passe incorrect : la 2FA reste active."
+    else:
+        store.remove(user.username)
+        request.session["flash"] = "Double authentification désactivée."
+    return RedirectResponse("/security", status_code=303)

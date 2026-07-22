@@ -96,6 +96,7 @@ def create_app(
     login_limiter=None,
     client_ip_resolver=None,
     session_registry=None,
+    totp_store=None,
     map_open=None,
     app_update_checker=None,
 ) -> FastAPI:
@@ -237,6 +238,11 @@ def create_app(
         if session_registry is not None
         else SessionRegistry(settings.sessions_file)
     )
+    if totp_store is not None:
+        app.state.totp = totp_store
+    else:
+        from adapters.totp_store import JsonTotp
+        app.state.totp = JsonTotp(settings.totp_file)
 
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")

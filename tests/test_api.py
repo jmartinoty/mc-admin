@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -106,6 +107,10 @@ class ApiTestBase(unittest.TestCase):
         os.close(se_fd)
         os.remove(self.sessions_path)  # créé à la demande par le registre
         self.addCleanup(lambda: os.path.exists(self.sessions_path) and os.remove(self.sessions_path))
+        to_fd, self.totp_path = tempfile.mkstemp(suffix=".json")
+        os.close(to_fd)
+        os.remove(self.totp_path)  # créé à la demande par le store 2FA
+        self.addCleanup(lambda: os.path.exists(self.totp_path) and os.remove(self.totp_path))
 
         settings = Settings(
             rcon_host="minecraft",
@@ -123,6 +128,7 @@ class ApiTestBase(unittest.TestCase):
             ops_file="/nonexistent/ops.json",
             users_file=self.users_store_path,
             sessions_file=self.sessions_path,
+            totp_file=self.totp_path,
         )
         self.game = FakeGame(players=[Player("alice")], whitelist=["alice", "bob"])
         self.container = FakeContainer(running=True)
@@ -419,6 +425,81 @@ class TestSessions(ApiTestBase):
 
     def test_sessions_page_requires_login(self):
         self.assertEqual(self.client.get("/sessions").status_code, 303)
+
+
+class TestTwoFactor(ApiTestBase):
+    def _current_code(self, secret):
+        from api import totp
+        return totp.code_at(secret, time.time())
+
+    def _enable_2fa_for(self, username, password):
+        """Active la 2FA de bout en bout via l'UI, puis se déconnecte.
+        Renvoie le secret base32 (pour fabriquer des codes dans les tests)."""
+        self.login(username, password)
+        token = self._csrf_from(self.client.get("/security").text)
+        self.client.post("/security/start", data={"csrf_token": token})
+        page = self.client.get("/security").text
+        secret = re.search(r'secret=([A-Z2-7]+)', page).group(1)
+        token = self._csrf_from(page)
+        res = self.client.post(
+            "/security/enable",
+            data={"code": self._current_code(secret), "csrf_token": token},
+        )
+        self.assertEqual(res.status_code, 303)
+        self.assertIn("Activée", self.client.get("/security").text)
+        self.client.post("/logout", data={"csrf_token": self.page_csrf()})
+        return secret
+
+    def test_enable_then_login_requires_code(self):
+        secret = self._enable_2fa_for("jeremy", "owner-pw")
+
+        # Le seul mot de passe ne connecte plus : on reçoit l'étape « code ».
+        res = self.login("jeremy", "owner-pw")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("code", res.text.lower())
+        self.assertEqual(self.client.get("/").status_code, 303)  # pas encore connecté
+
+        # Un mauvais code est refusé.
+        bad = self.client.post(
+            "/login/verify",
+            data={"code": "000000", "csrf_token": self._csrf_from(res.text)},
+        )
+        self.assertEqual(bad.status_code, 401)
+
+        # Le bon code termine la connexion.
+        ok = self.client.post(
+            "/login/verify",
+            data={"code": self._current_code(secret), "csrf_token": self._csrf_from(bad.text)},
+        )
+        self.assertEqual(ok.status_code, 303)
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_login_without_2fa_unchanged(self):
+        # Un compte sans 2FA se connecte directement (pas de régression).
+        self.assertEqual(self.login("paul", "admin-pw").status_code, 303)
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_disable_requires_password(self):
+        secret = self._enable_2fa_for("jeremy", "owner-pw")
+        store = self.app.state.totp
+        # Se reconnecter en passant la 2FA.
+        res = self.login("jeremy", "owner-pw")
+        self.client.post(
+            "/login/verify",
+            data={"code": self._current_code(secret), "csrf_token": self._csrf_from(res.text)},
+        )
+
+        # Mauvais mot de passe -> 2FA reste active.
+        token = self._csrf_from(self.client.get("/security").text)
+        self.client.post("/security/disable",
+                         data={"current_password": "wrong", "csrf_token": token})
+        self.assertTrue(store.is_enabled("jeremy"))
+
+        # Bon mot de passe -> désactivée.
+        token = self._csrf_from(self.client.get("/security").text)
+        self.client.post("/security/disable",
+                         data={"current_password": "owner-pw", "csrf_token": token})
+        self.assertFalse(store.is_enabled("jeremy"))
 
 
 class TestActionsRbac(ApiTestBase):
@@ -2303,6 +2384,7 @@ class TestFirstRunSetup(unittest.TestCase):
             metrics_config="/nonexistent/metrics.yml",
             mc_updater_container="mc-updater", ops_file="/nonexistent/ops.json",
             sessions_file=os.path.join(self.dir, "sessions.json"),
+            totp_file=os.path.join(self.dir, "totp.json"),
         )
         from domain.services import AdminService
         from adapters.restart_schedule import InMemoryRestartSchedule

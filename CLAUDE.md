@@ -1014,6 +1014,27 @@ commençant par les sauvegardes ; « ajouter un serveur » viendra ensuite.
   mémoire autoritative, ceci suppose UN SEUL worker uvicorn (déjà une
   contrainte du projet).
 
+- **2FA / TOTP (22/07/2026)** : ✅ implémenté. TOTP RFC 6238 codé en STDLIB
+  (`app/api/totp.py` — `hmac`/`hashlib`/`struct`/`base64`/`secrets`), doctrine
+  maison « pas de dépendance quand la stdlib suffit » (comme le RCON et le
+  portier ; `pyotp` volontairement écarté). Fonctions PURES (génération/
+  vérification, tolérance ±1 pas de 30 s, comparaison temps constant, URI
+  otpauth), testées contre le vecteur RFC. Secrets par utilisateur dans
+  `/data/totp.json` (`JsonTotp`, 0600 comme `passwords.json`) : schéma
+  `{user: {secret, confirmed}}` — un secret non confirmé (config en cours)
+  n'exige PAS encore de 2FA. Placement TRANSPORT (routes auth, pas le domaine),
+  self-service comme le mot de passe : page « Sécurité » (popover profil) pour
+  activer (générer → scanner/saisir la clé → confirmer avec un code) et
+  désactiver (exige le mot de passe : personne ne retire la 2FA depuis une
+  session laissée ouverte). Login à DEUX étapes : mot de passe correct + 2FA
+  active → `pending_2fa` en session (TTL 5 min) + étape « code »
+  (`/login/verify`) ; le mot de passe correct fait `cancel()` (pas `success()`)
+  sur l'anti-bruteforce pour ne PAS relâcher le compteur tant que le 2e facteur
+  n'est pas validé, et les tentatives TOTP passent par le même limiter (mêmes
+  buckets IP+pseudo). QR non embarqué (clé formatée + lien otpauth affichés,
+  saisie manuelle) — un encodeur QR pur-python serait la seule pièce manquante,
+  volontairement reportée pour rester sans dépendance.
+
 ### Roadmap V5.x (consolidations post-V5 — ✅ livrées au fil de l'eau)
 
 - **Page Réglages (`/game`)** : toutes les gamerules du serveur (58 en MC
