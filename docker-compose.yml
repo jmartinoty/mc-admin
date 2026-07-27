@@ -101,8 +101,30 @@ services:
       start_period: 15s
     networks:
       - mc_admin_internal            # pour joindre le proxy
+      - mc_map_internal              # pour relayer BlueMap, sans exposer 8100
       - mc_playit                    # pour joindre minecraft (RCON interne)
       - monitoring                   # pour joindre Prometheus (lecture seule)
+
+  # Carte BlueMap isolée : mc-admin est l'unique point d'entrée HTTP via
+  # /map/embed/. Le port 8100 n'est volontairement PAS publié sur l'hôte.
+  # Digest observé en production le 27/07/2026 (BlueMap annonce 5.22) :
+  # l'épinglage conserve exactement l'image validée, sans dérive de `latest`.
+  bluemap:
+    image: ghcr.io/bluemap-minecraft/bluemap@sha256:b0f0f36a083e77890f8e0168b00fb3e97a610addb89f3b5adfd785dc2b1cb9db
+    container_name: bluemap
+    restart: unless-stopped
+    command: ["-r", "-u", "-w"]
+    cpus: 2.0
+    mem_limit: 3g
+    stop_grace_period: 2m
+    volumes:
+      # Réutilise sans migration les données du conteneur `bluemap-trial`.
+      - /Volume1/AppData/bluemap/config:/app/config
+      - /Volume1/AppData/bluemap/data:/app/data
+      - /Volume1/AppData/bluemap/web:/app/web
+      - /Volume1/GameServers/minecraft/data/old_world_1:/app/world:ro
+    networks:
+      - mc_map_internal
 
   # Proxy Docker : SEUL conteneur qui touche le socket, et en LECTURE SEULE.
   # Whitelist MINIMALE : lister/inspecter + start/stop/restart. Rien d'autre.
@@ -337,6 +359,11 @@ services:
 networks:
   mc_admin_internal:
     driver: bridge
+  mc_map_internal:
+    driver: bridge
+    # Aucun port hôte : seule l'entrée mc-admin relaie la carte. Le bridge
+    # garde une sortie réseau pour les ressources Minecraft requises par
+    # BlueMap lors d'un changement de version du monde.
   mc_playit:
     external: true                  # défini par la stack minecraft
   monitoring:

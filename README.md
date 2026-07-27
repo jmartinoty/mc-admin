@@ -63,6 +63,10 @@ docker compose --profile tools create mc-backup-profile mc-backup-safety mc-upda
 docker compose --profile tools create --force-recreate mc-restore mc-op-levels
 ```
 
+BlueMap peut être ajouté comme service facultatif sans publier son port 8100.
+La page Carte de mc-admin reste alors l'unique accès HTTP authentifié. Voir
+[le guide BlueMap](docs/bluemap.md).
+
 Puis ouvrir `http://<hôte>:8080` :
 
 1. l'assistant de premier lancement crée le compte administrateur ;
@@ -86,6 +90,7 @@ Tout vit dans `.env` (voir [.env.example](.env.example)) :
 | `MC_ADMIN_PORT` | port HTTP de l'interface (défaut 8080) |
 | `MC_ADMIN_IMAGE` | image utilisée par mc-admin et le restaurateur (défaut `mc-admin:latest`) |
 | `MC_STARTUP_TIMEOUT_SECONDS` | délai du healthcheck Minecraft avant rollback (défaut 300 s) |
+| `BLUEMAP_*` / `MC_WORLD_DIR` | image, volumes et ressources du service BlueMap facultatif |
 | `MC_COMPOSE_DIR` / `MC_COMPOSE_PROJECT` / `MC_SERVICE` / `MC_CONTAINER` | pour la mise à jour contrôlée et la restauration |
 | `PROMETHEUS_URL` | facultatif — panneau métriques et page mise à jour |
 | `DISCORD_WEBHOOK_URL`, `TELEGRAM_*` | facultatif — notifications |

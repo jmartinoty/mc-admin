@@ -31,6 +31,33 @@ leurs commits ou redéploient involontairement Minecraft.
    (`feat|fix|refactor|test|docs|chore: ...`). Ne pas laisser une fonctionnalité
    terminée uniquement dans le worktree.
 
+### Signalements, issues et pull requests
+
+Jeremy peut signaler un problème en langage naturel, sans préparer lui-même
+une issue. L'agent commence par reproduire ou confirmer le constat et formule
+le comportement attendu avant de modifier le code.
+
+- Une correction évidente et très limitée (coquille, libellé, détail visuel)
+  peut passer directement par une branche et une pull request : la PR fournit
+  alors une trace suffisante.
+- Un bug fonctionnel confirmé, un sujet de sécurité, une évolution UX ou une
+  nouvelle fonctionnalité doit avoir une issue GitHub. Une idée encore à
+  arbitrer reste une issue sans démarrage automatique du développement.
+- L'issue décrit le **pourquoi** : constat, reproduction, résultat attendu et
+  critères d'acceptation. La PR décrit le **comment** : solution, tests et
+  éventuelles limites.
+- Travailler dans un worktree dédié sur une branche explicite, par exemple
+  `fix/42-sauvegarde-bloquee`, puis ouvrir une PR contenant `Closes #42`
+  lorsqu'une issue existe. Ne pas committer directement sur `main`.
+- Jeremy valide le résultat avant la fusion et avant toute publication. Après
+  fusion, la correction est intégrée à une release semver validée ; la CI
+  publie l'image GHCR, puis le NAS est mis à jour depuis le bouton intégré.
+  Il n'y a pas de `git pull` applicatif sur le NAS.
+- Si une release exige une modification du Compose (nouveau volume, service,
+  réseau, port ou variable obligatoire), l'indiquer explicitement : mettre à
+  niveau le Compose séparément avant d'appliquer l'image. Une image seule ne
+  peut pas modifier le fichier Compose installé sur l'hôte.
+
 ### Validation avant commit
 
 - Adapter les contrôles au changement : tests ciblés pendant le développement,

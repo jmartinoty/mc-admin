@@ -4,6 +4,18 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.15.0 — 2026-07-27
+
+### Carte BlueMap
+- BlueMap dispose désormais d'un service Compose reproductible, avec une
+  image épinglée, des limites de ressources et un redémarrage automatique.
+- Le port 8100 n'est plus publié : la carte est accessible uniquement par le
+  relais authentifié de mc-admin.
+- Le monde Minecraft reste monté en lecture seule et les données BlueMap
+  existantes sont réutilisées sans copie.
+- Un guide couvre l'installation, la migration depuis `bluemap-trial` et le
+  rollback.
+
 ## v0.14.0 — 2026-07-27
 
 ### Notifications
