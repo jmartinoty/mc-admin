@@ -158,6 +158,9 @@ window.mc = window.mc || {};
   if (!dialog) return;
 
   var text = document.getElementById("appConfirmText");
+  var checkRow = document.getElementById("appConfirmCheckRow");
+  var check = document.getElementById("appConfirmCheck");
+  var checkLabel = document.getElementById("appConfirmCheckLabel");
   var pending = null;
   var opener = null;
 
@@ -166,6 +169,15 @@ window.mc = window.mc || {};
     pending = form;
     opener = document.activeElement;
     text.textContent = form.getAttribute("data-confirm") || "Confirmer ?";
+    // Case optionnelle (data-confirm-check) : décochée par défaut à CHAQUE
+    // ouverture — un choix « forcer » ne doit jamais survivre d'un dialogue
+    // au suivant.
+    var checkText = form.getAttribute("data-confirm-check") || "";
+    if (checkRow) {
+      checkRow.hidden = !checkText;
+      if (checkLabel) checkLabel.textContent = checkText;
+      if (check) check.checked = false;
+    }
     if (dialog.showModal) dialog.showModal();
     else window.mc.submitForm(form);
   }
@@ -195,6 +207,21 @@ window.mc = window.mc || {};
     var form = pending;
     pending = null;
     dialog.close();
+    // La case est reportée comme un vrai champ de formulaire : même
+    // sémantique qu'une checkbox native, absente si décochée.
+    var name = form.getAttribute("data-confirm-check-name");
+    if (name) {
+      var previous = form.querySelector("input[data-confirm-injected]");
+      if (previous) previous.remove();
+      if (check && check.checked && checkRow && !checkRow.hidden) {
+        var extra = document.createElement("input");
+        extra.type = "hidden";
+        extra.name = name;
+        extra.value = "yes";
+        extra.setAttribute("data-confirm-injected", "");
+        form.appendChild(extra);
+      }
+    }
     window.mc.submitForm(form);
   });
 

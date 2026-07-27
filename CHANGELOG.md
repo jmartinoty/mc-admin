@@ -4,6 +4,21 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.13.0 — 2026-07-27
+
+### Tableau de bord
+- La fermeture pour maintenance devient un bouton « Maintenance » dans la
+  carte serveur, à côté de Redémarrer/Arrêter — la barre pleine largeur
+  disparaît. Le formulaire (message, retour prévu, délai) s'ouvre en
+  dialogue, comme le redémarrage.
+- Mise à jour du serveur en une ligne : le badge indique la version
+  disponible et le bouton rejoint la ligne version. La case « forcer même
+  si des joueurs sont connectés » n'apparaît plus que dans le dialogue de
+  confirmation — et seulement quand elle sert à quelque chose.
+- Tuiles de mesures : le libellé « 24 h » ne se coupe plus au milieu, la
+  RAM s'affiche en Gio au-delà de 1024 Mio, et toutes les tuiles gardent
+  la même hauteur, avec ou sans historique.
+
 ## v0.12.1 — 2026-07-27
 
 ### Mise à jour

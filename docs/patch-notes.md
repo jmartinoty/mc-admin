@@ -7,6 +7,12 @@ fix, même hors release.
 
 ## 2026-07-27
 
+- **Tuile « Joueurs en ligne » : le libellé « 24 h » se coupait (« 24 »
+  sur une ligne, « h » orpheline dessous)** — constaté par Jeremy sur
+  capture. Le hint est désormais insécable dans un libellé flex
+  (`metric-label`), et les tuiles sans historique reçoivent une ligne de
+  base neutre pour garder la même hauteur (`890137b`).
+
 - **Notes de version illisibles dans le dialogue de mise à jour**
   (constaté par Jeremy sur la carte 0.12.0). Le Markdown brut de l'API
   GitHub était affiché tel quel : `###`, `**` et retours à la ligne du

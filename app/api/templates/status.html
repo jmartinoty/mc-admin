@@ -121,8 +121,19 @@
           <span class="muted">version du jeu indisponible <a class="err-code err-code-link" href="{{ docs_code_url('MAJ-90') }}" target="_blank" rel="noopener" title="En savoir plus">MAJ-90</a></span>
         {% else %}
           <span class="k">version</span> <b>{{ update.current_version or "?" }}</b>
-          {% if game_state %}<span class="badge" title="le jeu ne répond pas encore">vérification…</span>{% elif update.update_available %}<span class="badge ko">màj dispo</span>{% else %}<span class="badge ok">à jour</span>{% endif %}
+          {% if game_state %}<span class="badge" title="le jeu ne répond pas encore">vérification…</span>{% elif update.update_available %}<span class="badge ko">{{ update.latest_version ~ " disponible" if update.latest_version else "màj dispo" }}</span>{% else %}<span class="badge ok">à jour</span>{% endif %}
           {% if update.changelog_url %}<a href="{{ update.changelog_url }}" target="_blank" rel="noopener">changelog ↗</a>{% endif %}
+          {% if update.update_available %}
+          {# La case « forcer » n'existe QUE dans le dialogue de confirmation,
+             et seulement quand elle a un sens (joueurs connectés, ou nombre
+             inconnu — les deux cas où le serveur refuse sans elle). #}
+          <form method="post" action="/actions/update" class="inline js-confirm-form"
+                data-confirm="Mettre à jour le serveur{{ ' vers la ' ~ update.latest_version if update.latest_version }} ? Il sera brièvement coupé (pull de l'image + recréation du conteneur)."
+                {% if status.players_online or not status.players_available %}data-confirm-check="Forcer même si des joueurs sont connectés" data-confirm-check-name="force"{% endif %}>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="small">Mettre à jour…</button>
+          </form>
+          {% endif %}
         {% endif %}
         {% endif %}
         {% if mod_count is not none %}
@@ -146,6 +157,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 3v5h5"/></svg>Redémarrer
       </button>
       {% endif %}
+      {% if can_maintenance and maintenance and not maintenance.active and not maintenance.pending %}
+      <button type="button" class="ibtn maint" id="maintenanceOpen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Maintenance
+      </button>
+      {% endif %}
       {% if can_stop %}
       <form method="post" action="/actions/stop" class="js-confirm-form"
             data-confirm="Arrêter le serveur ? Il restera éteint jusqu'à un démarrage manuel.">
@@ -157,15 +173,6 @@
       {% endif %}
     </div>
   </div>
-
-  {% if can_update and update and update.update_available %}
-  <form method="post" action="/actions/update" class="update-inline js-confirm-form"
-        data-confirm="Mettre à jour le serveur ? Il sera brièvement coupé (pull de l'image + recréation du conteneur).">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label class="inline"><input type="checkbox" name="force" value="yes" style="width:auto"> forcer même si des joueurs sont connectés</label>
-    <button class="small">Mettre à jour</button>
-  </form>
-  {% endif %}
 
   {% if status.players_available and status.players_online %}
   <p class="online-line">
@@ -182,8 +189,8 @@
     <div class="metric">
       <div class="metric-value">
         {% if m.value is not none %}
-          {%- set v = m.value | round(1) -%}
-          {{ v | int if v == (v | int) else v }}<span class="unit">{{ m.unit }}</span>
+          {%- set dv = metric_display(m.value, m.unit) -%}
+          {{ dv[0] }}<span class="unit">{{ dv[1] }}</span>
         {% else %}<span class="muted">–</span>{% endif %}
       </div>
       {% set points = spark_points(m.history) %}
@@ -191,8 +198,14 @@
       <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
         <polyline points="{{ points }}"/>
       </svg>
+      {% else %}
+      {# Ligne de base neutre : les tuiles gardent la même hauteur avec ou sans
+         historique — sans prétendre montrer 24 h de données. #}
+      <svg class="spark spark-flat" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+        <line x1="0" y1="24" x2="100" y2="24"/>
+      </svg>
       {% endif %}
-      <div class="metric-label">{{ m.label }}{% if points %} <span class="spark-hint">24 h</span>{% endif %}</div>
+      <div class="metric-label"><span class="metric-name">{{ m.label }}</span>{% if points %}<span class="spark-hint">· 24 h</span>{% endif %}</div>
     </div>
     {% endfor %}
   </div>
@@ -202,19 +215,22 @@
 </section>
 {% endif %}
 
-{# Fermer le serveur proprement : replié par défaut, ce n'est pas un geste
-   quotidien. Absent tant qu'une maintenance est déjà en cours ou annoncée
-   (le bandeau du haut porte alors les boutons utiles). #}
+{# Fermer le serveur proprement : action de la carte serveur (bouton
+   « Maintenance » de l'en-tête), formulaire en dialogue — même pattern que le
+   redémarrage, le dialogue EST l'étape délibérée. Absent tant qu'une
+   maintenance est en cours ou annoncée (le bandeau du haut porte alors les
+   boutons utiles). #}
 {% if can_maintenance and maintenance and not maintenance.active and not maintenance.pending %}
-<section class="card maintenance-setup">
-  <details>
-    <summary><h2 style="display:inline">Fermer pour maintenance</h2></summary>
-    <p class="muted">Arrête le serveur et laisse un portier répondre à sa place :
-      les joueurs voient un message d'attente dans leur liste de serveurs au lieu
-      d'une erreur de connexion.</p>
-    <form method="post" action="/actions/maintenance" class="js-confirm-form"
-          data-confirm="Fermer le serveur pour maintenance ? Les joueurs connectés seront déconnectés à la fermeture.">
+<dialog class="player-dialog" id="maintenanceDialog"
+        aria-labelledby="maintenanceDialogTitle" aria-describedby="maintenanceDialogDescription">
+  <div class="player-dialog-box">
+    <form method="post" action="/actions/maintenance">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h2 id="maintenanceDialogTitle">Fermer pour maintenance</h2>
+      <p class="muted" id="maintenanceDialogDescription">Arrête le serveur et laisse
+        un portier répondre à sa place : les joueurs voient un message d'attente
+        dans leur liste de serveurs au lieu d'une erreur de connexion. Les joueurs
+        connectés seront déconnectés à la fermeture.</p>
       <label>Message affiché aux joueurs
         <input type="text" name="message" maxlength="120" placeholder="Migration du monde">
       </label>
@@ -224,10 +240,30 @@
       <label>Délai avant fermeture <span class="muted">(minutes, 0 = tout de suite)</span>
         <input type="number" name="grace_minutes" min="0" max="120" step="1" value="5">
       </label>
-      <button class="small">Fermer le serveur</button>
+      <div class="dialog-actions">
+        <button type="button" class="txtbtn" id="maintenanceCancel">Annuler</button>
+        <button class="danger">Fermer le serveur</button>
+      </div>
     </form>
-  </details>
-</section>
+  </div>
+</dialog>
+<script>
+(function () {
+  var btn = document.getElementById("maintenanceOpen");
+  var dialog = document.getElementById("maintenanceDialog");
+  if (!btn || !dialog) return;
+  btn.addEventListener("click", function () {
+    if (dialog.showModal) dialog.showModal();
+    else dialog.setAttribute("open", "");
+    var input = dialog.querySelector("input[name='message']");
+    if (input) input.focus();
+  });
+  document.getElementById("maintenanceCancel").addEventListener("click", function () {
+    if (dialog.close) dialog.close();
+    else dialog.removeAttribute("open");
+  });
+})();
+</script>
 {% endif %}
 
 {% if show_infra and infra %}

@@ -237,6 +237,9 @@ summary:focus-visible,
 .verline b { color: var(--text); font-family: var(--mono); }
 .verline a { color: var(--accent-strong); text-decoration: none; }
 .verline a:hover { text-decoration: underline; }
+.verline form.inline { display: inline-flex; margin: 0; }
+.confirm-check { display: flex; align-items: center; gap: .5rem; margin: .2rem 0 .6rem; color: var(--muted); font-size: .9rem; }
+.confirm-check input { width: auto; }
 
 .iconbtns { display: flex; gap: .5rem; flex-wrap: wrap; }
 .iconbtns form { margin: 0; }
@@ -248,6 +251,7 @@ summary:focus-visible,
 .ibtn.restart:hover { background: var(--warning-dim); border-color: var(--warning); }
 .ibtn.stop { color: var(--danger); }
 .ibtn.stop:hover { background: var(--danger-dim); border-color: var(--danger); }
+.ibtn.maint:hover { background: var(--warning-dim); border-color: var(--warning); }
 .ibtn:disabled { opacity: .4; cursor: not-allowed; }
 .ibtn:disabled:hover { border-color: var(--border); background: var(--surface-2); }
 
@@ -437,7 +441,8 @@ summary:focus-visible,
 .metric { position: relative; overflow: hidden; min-height: 98px; background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 9px; padding: .75rem .85rem; }
 .metric-value { font-family: var(--mono); font-size: 1.45rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .metric-value .unit { font-size: .8rem; color: var(--muted); margin-left: .2rem; font-weight: 400; }
-.metric-label { color: var(--muted); font-size: .82rem; margin-top: .15rem; }
+.metric-label { color: var(--muted); font-size: .82rem; margin-top: .15rem; display: flex; align-items: baseline; gap: .3rem; white-space: nowrap; }
+.metric-label .metric-name { overflow: hidden; text-overflow: ellipsis; }
 /* Sparkline RÉELLE (24 h, Prometheus) — a remplacé l'ancien zigzag décoratif
    ::after : un faux graphe à côté de vrais serait trompeur. */
 .metric .spark {
@@ -447,6 +452,7 @@ summary:focus-visible,
   opacity: .85;
 }
 .metric .spark polyline { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.metric .spark.spark-flat line { stroke: var(--border); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .spark-hint { font-size: .68rem; opacity: .7; }
 .metrics-missing { margin: 1rem 0 0; }
 .storage-history { display: flex; align-items: center; gap: .9rem; margin: .6rem 0; }

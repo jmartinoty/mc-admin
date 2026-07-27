@@ -673,7 +673,10 @@ class TestMetricsPanel(ApiTestBase):
         page = self.client.get("/").text
         self.assertIn("Joueurs en ligne", page)
         self.assertIn("RAM serveur", page)
-        self.assertIn("4500", page)
+        # 4500 Mio s'affiche en Gio (4500/1024 -> 4.4) — pur affichage,
+        # la métrique source reste en Mio.
+        self.assertIn("4.4", page)
+        self.assertIn("Gio", page)
 
     def test_sparkline_rendered_when_history_available(self):
         # FakeMetrics : ram porte un history 3 points -> polyline ; players non.
@@ -747,8 +750,14 @@ class TestUpdate(ApiTestBase):
         self.assertIn("/actions/update", page)
         self.assertIn("26.1", page)
         self.assertIn("26.2", page)
-        self.assertIn("màj dispo", page)
+        self.assertIn("26.2 disponible", page)          # le badge dit VERS QUOI
         self.assertIn("changelog", page)
+        # La case « forcer » vit dans le dialogue de confirmation : le
+        # formulaire la déclare (des joueurs sont connectés dans la fixture),
+        # et la rangée dédiée d'avant a disparu.
+        self.assertIn('data-confirm-check="Forcer même si des joueurs sont connectés"', page)
+        self.assertIn('data-confirm-check-name="force"', page)
+        self.assertNotIn("update-inline", page)
 
     def test_admin_post_403(self):
         self.login("paul", "admin-pw")

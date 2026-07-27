@@ -41,6 +41,22 @@ def spark_points(history, width: float = 100.0, height: float = 28.0, pad: float
 
 templates.env.globals["spark_points"] = spark_points
 
+
+def metric_display(value, unit: str) -> tuple[str, str]:
+    """Valeur + unité prêtes à afficher. Les Mio passent en Gio dès 1024
+    (« 4598.5 Mio » se lit mal, « 4.5 Gio » se lit tout de suite) — pur
+    affichage, la métrique et son unité source ne changent pas."""
+    v = float(value)
+    u = unit or ""
+    if u == "Mio" and abs(v) >= 1024:
+        v, u = v / 1024, "Gio"
+    r = round(v, 1)
+    text = str(int(r)) if r == int(r) else f"{r:.1f}"
+    return text, u
+
+
+templates.env.globals["metric_display"] = metric_display
+
 # Notes de release (bandeau MAJ) : Markdown GitHub -> HTML sûr et lisible.
 from api.release_notes import render_release_notes  # noqa: E402 — après l'env Jinja
 
