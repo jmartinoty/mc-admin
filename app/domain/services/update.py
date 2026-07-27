@@ -205,5 +205,5 @@ class UpdateMixin:
                      f"phase=app_update_applied version={release.version}")
         self._notify.notify("Mise à jour de mc-admin lancée",
                             f"vers la version {release.version} — l'application redémarre",
-                            "info", event="update")
+                            "info", event="app_update")
 

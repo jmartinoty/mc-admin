@@ -4,6 +4,21 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.14.0 — 2026-07-27
+
+### Notifications
+- Les mises à jour de mc-admin ont désormais leur propre interrupteur
+  (« Mises à jour de mc-admin »), **désactivé par défaut** — fini la
+  notification à chaque mise à jour de l'application. L'événement
+  « Mises à jour du serveur de jeu » ne concerne plus que le jeu.
+  Qui veut être prévenu coche l'interrupteur sur son canal.
+
+### Tableau de bord
+- La courbe des tuiles (RAM, TPS…) ne passe plus par-dessus le libellé :
+  elle vit dans sa propre bande en bas de tuile.
+- Les noms de tuiles ne sont plus tronqués (« Joueurs en li… ») : le nom
+  reste entier et l'indication « 24 h » passe à la ligne si la place manque.
+
 ## v0.13.0 — 2026-07-27
 
 ### Tableau de bord

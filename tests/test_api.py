@@ -3225,6 +3225,12 @@ class TestAppUpdate(ApiTestBase):
         self.assertEqual(self.app_updater.starts, 1)
         self.assertIn("phase=app_update_applied version=" + self.NEWER_VERSION,
                       self.audit.entries[-1].detail)
+        # La notification part sous SON événement (« app_update », opt-in) et
+        # plus jamais sous « update » (réservé au serveur de jeu) : Jeremy la
+        # recevait en double à chaque release (27/07/2026).
+        title, _, _, event = self.notifier.sent[-1]
+        self.assertEqual(title, "Mise à jour de mc-admin lancée")
+        self.assertEqual(event, "app_update")
         page = self.client.get("/updating").text
         self.assertIn("Mise à jour en cours", page)
         self.assertIn("/healthz", page)                            # sonde de retour

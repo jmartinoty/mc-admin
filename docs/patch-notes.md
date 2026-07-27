@@ -7,6 +7,14 @@ fix, même hors release.
 
 ## 2026-07-27
 
+- **Tuiles : la sparkline passait par-dessus le libellé (RAM/TPS) et
+  « Joueurs en ligne » était tronqué en « Joueurs en li… »** — constaté
+  par Jeremy sur capture (0.13.0). La sparkline était positionnée en
+  absolu dans la tuile : dès que la courbe montait, elle traversait le
+  texte ; et le nowrap+ellipsis de la veille coupait le nom. Fix :
+  colonne flex, sparkline en flux poussée en bas, nom jamais tronqué,
+  hint « · 24 h » atomique (`bbe5d35`).
+
 - **Tuile « Joueurs en ligne » : le libellé « 24 h » se coupait (« 24 »
   sur une ligne, « h » orpheline dessous)** — constaté par Jeremy sur
   capture. Le hint est désormais insécable dans un libellé flex

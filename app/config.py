@@ -14,7 +14,7 @@ import yaml
 from domain.rbac import build_roles, build_users
 
 # Version affichée dans l'UI et attendue par le tag git de release (vX.Y.Z).
-APP_VERSION = "0.13.0"
+APP_VERSION = "0.14.0"
 # Dépôt public — source des releases pour le bouton MAJ.
 APP_REPO = "jmartinoty/mc-admin"
 

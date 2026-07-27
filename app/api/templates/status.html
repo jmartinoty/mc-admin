@@ -194,6 +194,7 @@
         {% else %}<span class="muted">–</span>{% endif %}
       </div>
       {% set points = spark_points(m.history) %}
+      <div class="metric-label"><span class="metric-name">{{ m.label }}</span>{% if points %}<span class="spark-hint">· 24 h</span>{% endif %}</div>
       {% if points %}
       <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
         <polyline points="{{ points }}"/>
@@ -205,7 +206,6 @@
         <line x1="0" y1="24" x2="100" y2="24"/>
       </svg>
       {% endif %}
-      <div class="metric-label"><span class="metric-name">{{ m.label }}</span>{% if points %}<span class="spark-hint">· 24 h</span>{% endif %}</div>
     </div>
     {% endfor %}
   </div>

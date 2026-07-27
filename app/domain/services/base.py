@@ -101,11 +101,14 @@ NOTIFICATION_CHANNEL_TYPES: dict[str, tuple[str, ...]] = {
 # Événements débrayables par canal (les échecs d'actions ne le sont jamais).
 EVENT_KEYS: tuple[str, ...] = (
     "player", "new_player", "moderation", "backup", "restart", "update",
-    "health", "performance", "disk", "restore",
+    "app_update", "health", "performance", "disk", "restore",
 )
 # Défauts pour une clé ABSENTE d'un canal existant (migrations douces) :
 # « update » était toujours envoyé avant d'être débrayable -> reste actif ;
-# les nouveaux filtres sont opt-in (pas de spam surprise).
+# les nouveaux filtres sont opt-in (pas de spam surprise). « app_update »
+# (mise à jour de mc-admin LUI-MÊME) est volontairement opt-in AUSSI : c'est
+# la notification de sa propre action, Jeremy la recevait en double à chaque
+# release (27/07/2026) — qui la veut la coche.
 EVENT_LEGACY_DEFAULTS: dict[str, bool] = {"update": True}
 
 

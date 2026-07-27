@@ -438,22 +438,29 @@ summary:focus-visible,
 
 /* ---- metrics ---- */
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: .8rem; margin-top: 1rem; }
-.metric { position: relative; overflow: hidden; min-height: 98px; background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 9px; padding: .75rem .85rem; }
+.metric { display: flex; flex-direction: column; overflow: hidden; min-height: 98px; background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 9px; padding: .75rem .85rem; }
 .metric-value { font-family: var(--mono); font-size: 1.45rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .metric-value .unit { font-size: .8rem; color: var(--muted); margin-left: .2rem; font-weight: 400; }
-.metric-label { color: var(--muted); font-size: .82rem; margin-top: .15rem; display: flex; align-items: baseline; gap: .3rem; white-space: nowrap; }
-.metric-label .metric-name { overflow: hidden; text-overflow: ellipsis; }
+.metric-label { color: var(--muted); font-size: .82rem; margin-top: .15rem; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: .3rem; }
+/* Le nom reste ENTIER (jamais tronqué) ; le hint « · 24 h » est atomique et
+   passe à la ligne s'il manque de place — plus d'orphelin ni d'ellipse. */
+.metric-label .metric-name { white-space: nowrap; }
 /* Sparkline RÉELLE (24 h, Prometheus) — a remplacé l'ancien zigzag décoratif
-   ::after : un faux graphe à côté de vrais serait trompeur. */
+   ::after : un faux graphe à côté de vrais serait trompeur. En FLUX (dernier
+   enfant de la colonne flex, poussé en bas par margin-top:auto) : l'absolu
+   d'avant passait PAR-DESSUS le libellé dès que la courbe montait haut
+   (constaté par Jeremy sur la tuile RAM). */
 .metric .spark {
-  position: absolute;
-  left: .85rem; right: .85rem; bottom: .95rem;
-  width: calc(100% - 1.7rem); height: 20px;
+  flex: none;
+  margin-top: auto;
+  padding-top: .35rem;
+  width: 100%; height: 20px;
+  box-sizing: content-box;
   opacity: .85;
 }
 .metric .spark polyline { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .metric .spark.spark-flat line { stroke: var(--border); stroke-width: 2; vector-effect: non-scaling-stroke; }
-.spark-hint { font-size: .68rem; opacity: .7; }
+.spark-hint { font-size: .68rem; opacity: .7; white-space: nowrap; }
 .metrics-missing { margin: 1rem 0 0; }
 .storage-history { display: flex; align-items: center; gap: .9rem; margin: .6rem 0; }
 .storage-spark { width: 130px; height: 34px; flex: none; opacity: .9; }
