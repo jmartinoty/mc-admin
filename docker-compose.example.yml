@@ -2,6 +2,7 @@
 # Copier docker-compose.example.yml -> docker-compose.yml et .env.example -> .env,
 # remplir .env, puis :
 #   docker compose up -d --build
+#   docker compose --profile map up -d bluemap  # carte facultative
 #   docker compose --profile tools create mc-backup-profile mc-backup-safety mc-updater mc-restore mc-op-levels mc-doorman
 # Premier lancement : ouvrir http://<hôte>:8080 — l'assistant crée le compte
 # administrateur puis propose de brancher le serveur (détection automatique).
@@ -85,7 +86,28 @@ services:
       start_period: 15s
     networks:
       - mc_admin_internal
+      - mc_map_internal
       - mc_net
+
+  # Carte BlueMap facultative. Son port 8100 reste strictement interne :
+  # l'utilisateur passe par la page /map authentifiée de mc-admin.
+  # Avant le premier démarrage, créer les trois dossiers BLUEMAP_* et placer
+  # une configuration BlueMap valide dans BLUEMAP_CONFIG_DIR.
+  bluemap:
+    image: ${BLUEMAP_IMAGE:-ghcr.io/bluemap-minecraft/bluemap@sha256:b0f0f36a083e77890f8e0168b00fb3e97a610addb89f3b5adfd785dc2b1cb9db}
+    restart: unless-stopped
+    profiles: ["map"]
+    command: ["-r", "-u", "-w"]
+    cpus: ${BLUEMAP_CPUS:-2.0}
+    mem_limit: ${BLUEMAP_MEMORY:-3g}
+    stop_grace_period: 2m
+    volumes:
+      - ${BLUEMAP_CONFIG_DIR:-./bluemap/config}:/app/config
+      - ${BLUEMAP_DATA_DIR:-./bluemap/data}:/app/data
+      - ${BLUEMAP_WEB_DIR:-./bluemap/web}:/app/web
+      - ${MC_WORLD_DIR:-${MC_DATA_DIR}/world}:/app/world:ro
+    networks:
+      - mc_map_internal
 
   # SEUL conteneur qui touche le socket Docker en permanence — lecture seule,
   # whitelist minimale, jamais exposé sur l'hôte.
@@ -303,6 +325,9 @@ services:
 networks:
   mc_admin_internal:
     driver: bridge
+  mc_map_internal:
+    driver: bridge
+    # Pas de port publié, mais une sortie réseau pour les ressources Minecraft.
   mc_net:
     external: true
     name: ${MC_NETWORK}
