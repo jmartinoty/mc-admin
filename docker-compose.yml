@@ -4,8 +4,10 @@
 
 services:
   mc-admin:
-    build: .
-    image: mc-admin:latest
+    # Installation « end-user » depuis le 27/07/2026 : image publiée par la CI
+    # (plus de build local). Mettre à jour = bouton MAJ dans l'UI (ou, en
+    # secours, la même séquence à la main : cf. CLAUDE.md §0).
+    image: ghcr.io/jmartinoty/mc-admin:latest
     container_name: mc-admin
     restart: unless-stopped
     depends_on:
@@ -226,8 +228,6 @@ services:
   # le socket Docker, jamais mc-admin (même modèle que mc-updater). Commande
   # FIGÉE : pull de la nouvelle image, recréation de mc-admin puis de TOUS
   # les one-shots — le piège des workers périmés disparaît avec.
-  # ⚠ Sans effet sur CETTE installation (build git local, pull inoffensif) :
-  # le bouton est masqué dans l'UI, service défini pour parité avec l'exemple.
   mc-admin-updater:
     image: docker:27-cli
     container_name: mc-admin-updater
@@ -239,7 +239,7 @@ services:
       - >-
         docker compose --project-directory /Volume1/Projects/mc-admin --env-file /Volume1/Projects/mc-admin/.env pull mc-admin
         && docker compose --project-directory /Volume1/Projects/mc-admin --env-file /Volume1/Projects/mc-admin/.env up -d --no-deps mc-admin
-        && docker compose --project-directory /Volume1/Projects/mc-admin --env-file /Volume1/Projects/mc-admin/.env --profile tools create --force-recreate mc-restore mc-op-levels mc-backup-profile
+        && docker compose --project-directory /Volume1/Projects/mc-admin --env-file /Volume1/Projects/mc-admin/.env --profile tools create --force-recreate mc-restore mc-op-levels mc-backup-profile mc-doorman
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /Volume1/Projects/mc-admin:/Volume1/Projects/mc-admin:ro
@@ -247,7 +247,7 @@ services:
   mc-restore:
     # Réutilise l'image mc-admin : restore_worker.py contient la transaction
     # staging -> rollback reflink -> synchronisation en place.
-    image: mc-admin:latest
+    image: ghcr.io/jmartinoty/mc-admin:latest
     container_name: mc-restore
     restart: "no"
     profiles: ["tools"]
@@ -271,7 +271,7 @@ services:
   # Il arrête Minecraft, remplace ops.json atomiquement, attend le healthcheck et
   # restaure l'original si le serveur ne revient pas correctement.
   mc-op-levels:
-    image: mc-admin:latest
+    image: ghcr.io/jmartinoty/mc-admin:latest
     container_name: mc-op-levels
     restart: "no"
     profiles: ["tools"]
@@ -310,7 +310,7 @@ services:
   # Profil `tools` :
   #   docker compose --profile tools create --force-recreate mc-doorman
   mc-doorman:
-    image: mc-admin:latest          # le portier EST app/doorman_server.py
+    image: ghcr.io/jmartinoty/mc-admin:latest  # le portier EST app/doorman_server.py
     container_name: mc-doorman
     restart: "no"                   # démarré/arrêté à la demande, jamais tout seul
     profiles: ["tools"]

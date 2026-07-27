@@ -1,9 +1,10 @@
 {% extends "shell.html" %}
+{% from "_macros.html" import degraded %}
 {% block page %}
 <h1>Whitelist</h1>
 <section class="card">
   {% if whitelist is none %}
-    <p class="muted">Whitelist indisponible (RCON injoignable).</p>
+    {{ degraded("Le jeu ne répond pas — liste blanche indisponible pour le moment.", "JEU-90") }}
   {% else %}
     {% if whitelist %}
     <ul class="players">

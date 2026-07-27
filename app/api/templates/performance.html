@@ -1,13 +1,12 @@
 {% extends "shell.html" %}
+{% from "_macros.html" import degraded %}
 {% block page %}
 <h1>Performances</h1>
 
 {% if perf is none %}
 <section class="card">
-  <h2>Données indisponibles</h2>
-  <p class="muted">Prometheus est injoignable — les mesures de performance
-    (TPS, MSPT, entités, chunks) viennent de lui. Vérifie la stack de
-    supervision puis recharge la page.</p>
+  <h2>Mesures indisponibles</h2>
+  {{ degraded("Les mesures de performance (TPS, MSPT, entités, chunks) ne sont pas disponibles pour le moment. Recharge la page dans un instant.", "SUR-90") }}
 </section>
 {% else %}
 

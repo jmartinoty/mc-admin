@@ -1,9 +1,10 @@
 {% extends "shell.html" %}
+{% from "_macros.html" import degraded %}
 {% block page %}
 <h1>Bannis</h1>
 <section class="card">
   {% if bans is none %}
-    <p class="muted">Liste des bannissements indisponible.</p>
+    {{ degraded("Le jeu ne répond pas — liste des bannis indisponible pour le moment.", "JEU-90") }}
   {% else %}
     {% if bans %}
     <div class="table-wrap">

@@ -5,6 +5,15 @@ Liste courte, par ordre antéchronologique, de chaque correctif — distincte du
 date, une ligne de constat, une ligne de cause/fix. Mise à jour à chaque bug
 fix, même hors release.
 
+## 2026-07-27
+
+- **Mise à jour en un clic : mc-doorman (et mc-op-levels dans le compose
+  exemple) restaient sur l'ancienne image après une mise à jour.** La
+  commande du one-shot `mc-admin-updater` ne recréait pas tous les
+  one-shots basés sur l'image mc-admin — exactement le piège des « workers
+  périmés » que ce mécanisme devait éliminer. Fix : liste de recréation
+  complétée dans les deux composes.
+
 ## 2026-07-20
 
 - **BlueMap : modélisation précise perdue ~100 blocs après un bâtiment

@@ -1,9 +1,10 @@
 {% extends "shell.html" %}
+{% from "_macros.html" import degraded %}
 {% block page %}
 <h1>Réglages du jeu</h1>
 
 {% if gamerules is none %}
-<section class="card"><p class="muted">Réglages indisponibles (serveur injoignable).</p></section>
+<section class="card">{{ degraded("Le jeu ne répond pas — réglages indisponibles pour le moment.", "JEU-90") }}</section>
 {% else %}
 <section class="card">
   <div class="game-grid">

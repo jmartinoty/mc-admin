@@ -14,7 +14,7 @@ import yaml
 from domain.rbac import build_roles, build_users
 
 # Version affichée dans l'UI et attendue par le tag git de release (vX.Y.Z).
-APP_VERSION = "0.10.1"
+APP_VERSION = "0.11.0"
 # Dépôt public — source des releases pour le bouton MAJ.
 APP_REPO = "jmartinoty/mc-admin"
 
@@ -249,9 +249,9 @@ DEFAULT_METRICS: list[dict] = [
      "spark": True},
     {"key": "latency", "label": "Latence ping", "unit": "ms",
      "query": 'minecraft_status_response_time_seconds{server_host="{container}"} * 1000'},
-    {"key": "cpu", "label": "CPU conteneur", "unit": "%",
+    {"key": "cpu", "label": "CPU serveur", "unit": "%",
      "query": 'rate(container_cpu_usage_seconds_total{name="{container}"}[2m]) * 100'},
-    {"key": "ram", "label": "RAM conteneur", "unit": "Mio",
+    {"key": "ram", "label": "RAM serveur", "unit": "Mio",
      "query": 'container_memory_working_set_bytes{name="{container}"} / 1048576',
      "spark": True},
     # TPS/MSPT : mod FabricExporter côté serveur (s'appuie sur spark), scrapé

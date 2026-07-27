@@ -4,6 +4,25 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.11.0 — 2026-07-27
+
+### Sauvegardes
+- L'assistant de profil avance désormais en étapes guidées, avec des
+  questions en langage clair plutôt que des champs techniques.
+- La modale de sauvegarde pose des questions simples (quoi sauvegarder,
+  quand) au lieu d'exposer le vocabulaire Docker.
+
+### Messages
+- Les erreurs s'affichent en langage clair, chacune avec un code stable
+  documenté ([docs/codes.md](docs/codes.md)) pour retrouver le détail.
+
+### Mise à jour
+- Correctif : la mise à jour en un clic recrée désormais **tous** les
+  outils internes (dont le portier de maintenance) sur la nouvelle image —
+  ils ne peuvent plus rester sur une version périmée.
+- Le bouton « Me le rappeler plus tard », annoncé dans les notes de la
+  v0.10.1, est réellement inclus à partir de cette version.
+
 ## v0.10.1 — 2026-07-20
 
 ### Terminal

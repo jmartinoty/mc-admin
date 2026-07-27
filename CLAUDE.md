@@ -66,17 +66,35 @@ leurs commits ou redéploient involontairement Minecraft.
 
 ### Déploiement de production
 
-Pour un changement contenu dans l'image applicative, reconstruire **seulement**
-`mc-admin` :
+**Depuis le 27/07/2026, l'installation du NAS est une install « end-user »** :
+`mc-admin` et les one-shots (mc-restore, mc-op-levels, mc-doorman) tournent
+sur l'image publiée `ghcr.io/jmartinoty/mc-admin:latest`. Plus aucun build
+local, plus de `up -d --build`. **Livrer du code en production = publier une
+release** :
+
+1. intégrer et tester sur `main` (suite pytest complète + ruff), pousser `nas` ;
+2. bump `APP_VERSION` (`app/config.py`) + entrée `CHANGELOG.md`, commit
+   `chore(release): vX.Y.Z` ;
+3. squash vers origin (workflow public, cf. « Git et informations privées »),
+   tag `vX.Y.Z`, `gh release create` ;
+4. la CI publie l'image ghcr (`latest` + semver) ; la carte MAJ de l'accueil
+   la propose sous 24 h et **Jeremy applique depuis l'UI** (chemin nominal).
+
+Application manuelle en secours (même séquence que le one-shot
+`mc-admin-updater`) :
 
 ```bash
-ssh NAS-ts docker compose \
-  --project-directory /Volume1/Projects/mc-admin \
-  --env-file /Volume1/Projects/mc-admin/.env \
-  up -d --build --no-deps mc-admin
+ssh NAS-ts "cd /Volume1/Projects/mc-admin \
+  && docker compose --env-file .env pull mc-admin \
+  && docker compose --env-file .env up -d --no-deps mc-admin \
+  && docker compose --env-file .env --profile tools create --force-recreate \
+       mc-restore mc-op-levels mc-backup-profile mc-doorman"
 ```
 
-- Ne pas lancer un `docker compose up -d --build` global : il peut recréer les
+- Tester du code AVANT release : jamais sur les conteneurs de prod — suite
+  pytest locale, et au besoin une image d'essai TAGUÉE construite sur le
+  daemon NAS + conteneur jetable (pattern banc d'essai du 19/07/2026).
+- Ne pas lancer un `docker compose up -d` global : il peut recréer les
   compagnons, provoquer des conflits de noms ou toucher au serveur de jeu.
 - Ne jamais redémarrer `minecraft` pour une modification de `mc-admin`.
   N'élargir le déploiement à un autre service que si le changement le demande
@@ -101,6 +119,26 @@ des deux conteneurs.
 Les propositions validées, leur périmètre et leurs critères d'acceptation sont
 suivis dans [`docs/ux-roadmap.md`](docs/ux-roadmap.md). Mettre ce document à
 jour lorsqu'un lot UX est commencé, terminé ou volontairement reporté.
+
+### Chantier actif : installation Docker et onboarding
+
+Jeremy a validé le chantier de distribution Docker destiné aux utilisateurs
+finaux. Le plan détaillé et ses critères d'acceptation sont dans
+[`docs/docker-onboarding-plan.md`](docs/docker-onboarding-plan.md). **Le lire
+avant toute modification liée à l'installation, aux serveurs, à RCON, aux
+workers ou à l'import joueurs.**
+
+Décisions à ne pas contourner :
+
+- travailler dans un worktree `claude/docker-onboarding`, jamais dans le
+  répertoire de production ;
+- installation V1 Docker Compose, un seul serveur actif ;
+- retirer les `container_name` globaux et résoudre les workers par labels ;
+- conserver le socket brut hors du web : helper one-shot à commande figée ;
+- détecter RCON depuis `server.properties`, avec saisie manuelle en secours ;
+- utiliser un volume mc-admin neuf et un Minecraft jetable pour le laboratoire ;
+- ne jamais recopier, monter en écriture ou restaurer les données de production
+  pendant ce chantier.
 
 ### Patch notes
 
@@ -225,15 +263,13 @@ python -m unittest discover -s tests -t . # équivalent stdlib (aucune dépendan
 ruff check app/                          # E, F, W — ligne 120
 ruff check --fix app/
 
-# Déploiement ciblé sur le TerraMaster (workflow complet et contrôles : §0)
-ssh NAS-ts docker compose --project-directory /Volume1/Projects/mc-admin \
-  --env-file /Volume1/Projects/mc-admin/.env \
-  up -d --build --no-deps mc-admin
+# Déploiement : l'install NAS consomme l'image ghcr publiée par la CI —
+# livrer = publier une release (workflow complet et contrôles : §0).
 ssh NAS-ts docker logs -f mc-admin
 ```
 
-Le code est **intégré à l'image** (pas de bind-mount) → toute modif code/template
-nécessite `--build`.
+Le code est **intégré à l'image** (pas de bind-mount) → toute modif
+code/template n'atteint la prod que par une release (image ghcr), cf. §0.
 
 ---
 
@@ -1112,8 +1148,9 @@ commençant par les sauvegardes ; « ajouter un serveur » viendra ensuite.
   (`jmartinoty/mc-admin`) est destiné à pouvoir devenir public : aucune
   information personnelle ou secrète n'y est admise et aucun push n'y est fait
   sans demande explicite de Jeremy (workflow complet : §0).
-- Image construite localement (`build: .`), `mc-admin:latest`. Port hôte `3011`
-  → `8000` conteneur. Reverse-proxy : **`https://mc-admin.home`** (NPM,
+- Image **publiée** `ghcr.io/jmartinoty/mc-admin:latest` (install « end-user »
+  depuis le 27/07/2026 — plus de build local, mise à jour par le bouton MAJ
+  de l'UI, cf. §0). Port hôte `3011` → `8000` conteneur. Reverse-proxy : **`https://mc-admin.home`** (NPM,
   certificat wildcard **mkcert** `*.home`, expire **octobre 2028**). Accès
   direct `http://<IP-NAS>:3011` conservé pour le healthcheck Docker, mais le
   login n'y fonctionne plus (cookie `Secure`, cf. §7.5).

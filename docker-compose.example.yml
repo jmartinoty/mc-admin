@@ -205,7 +205,7 @@ services:
       - >-
         docker compose --project-directory ${MC_ADMIN_COMPOSE_DIR:-.} pull mc-admin
         && docker compose --project-directory ${MC_ADMIN_COMPOSE_DIR:-.} up -d --no-deps mc-admin
-        && docker compose --project-directory ${MC_ADMIN_COMPOSE_DIR:-.} --profile tools create --force-recreate mc-restore mc-backup-profile
+        && docker compose --project-directory ${MC_ADMIN_COMPOSE_DIR:-.} --profile tools create --force-recreate mc-restore mc-op-levels mc-backup-profile mc-doorman
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Monté au MÊME chemin que sur l'hôte : les bind mounts relatifs de CE

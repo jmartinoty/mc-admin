@@ -1,4 +1,5 @@
 {% extends "shell.html" %}
+{% from "_macros.html" import degraded %}
 {% block page %}
 {# Maintenance — le bandeau est visible de TOUS (savoir que le serveur est
    volontairement fermé est une information, pas un privilège) ; seuls les
@@ -92,9 +93,7 @@
     <h1 class="srv-name">Serveur injoignable</h1>
     <span class="pill bad"><span class="led"></span>hors de portée</span>
   </div>
-  <p class="muted">mc-admin n'arrive pas à joindre le serveur Minecraft.
-    Vérifie que le conteneur du serveur et le proxy Docker sont démarrés et
-    correctement renseignés dans la configuration.</p>
+  {{ degraded("mc-admin n'arrive pas à joindre le serveur. Vérifie qu'il est démarré et bien renseigné dans la page Serveurs.", "SRV-90") }}
 </section>
 {% else %}
 {% set running = status.container.running %}
@@ -119,7 +118,7 @@
       <div class="verline">
         {% if can_update %}
         {% if update is none %}
-          <span class="muted">version indisponible (Mojang/Prometheus injoignable)</span>
+          <span class="muted">version du jeu indisponible <a class="err-code err-code-link" href="{{ docs_code_url('MAJ-90') }}" target="_blank" rel="noopener" title="En savoir plus">MAJ-90</a></span>
         {% else %}
           <span class="k">version</span> <b>{{ update.current_version or "?" }}</b>
           {% if game_state %}<span class="badge" title="le jeu ne répond pas encore">vérification…</span>{% elif update.update_available %}<span class="badge ko">màj dispo</span>{% else %}<span class="badge ok">à jour</span>{% endif %}
@@ -174,7 +173,7 @@
     {% for p in status.players_online %}<span class="online-name">{{ p.name }}</span>{% endfor %}
   </p>
   {% elif not status.players_available %}
-  <p class="online-line muted">Liste des joueurs indisponible (RCON injoignable).</p>
+  {{ degraded("Le jeu ne répond pas — liste des joueurs indisponible pour le moment.", "JEU-90") }}
   {% endif %}
 
   {% if metrics %}
@@ -198,7 +197,7 @@
     {% endfor %}
   </div>
   {% elif metrics is none %}
-  <p class="muted metrics-missing">Métriques indisponibles (Prometheus injoignable).</p>
+  <div class="metrics-missing">{{ degraded("Mesures indisponibles pour le moment.", "SUR-90") }}</div>
   {% endif %}
 </section>
 {% endif %}
@@ -249,7 +248,7 @@
 <section class="card game-card">
   <h2>Jeu <a class="txtbtn card-more" href="/game">tous les réglages →</a></h2>
   {% if game is none %}
-  <p class="muted">Réglages indisponibles (serveur injoignable).</p>
+  {{ degraded("Le jeu ne répond pas — réglages indisponibles pour le moment.", "JEU-90") }}
   {% else %}
   <div class="game-grid">
     <div class="game-group">
@@ -429,7 +428,7 @@
 {% endif %}
 {% endblock %}
 
-{% block page_scripts %}<script src="/static/app.js?v=20260720-term2"></script>
+{% block page_scripts %}<script src="/static/app.js?v=20260720-codes"></script>
 <script>
 (function () {
   // UI-3 : signes vitaux vivants — pastille/uptime + Infrastructure toutes

@@ -10,7 +10,7 @@ from domain.errors import ServerUnavailable
 
 SPECS = [
     {"key": "players", "label": "Joueurs en ligne", "unit": "", "query": 'minecraft_status_players_online_count{server_host="minecraft"}'},
-    {"key": "ram", "label": "RAM conteneur", "unit": "Mio", "query": 'container_memory_working_set_bytes{name="minecraft"} / 1048576'},
+    {"key": "ram", "label": "RAM serveur", "unit": "Mio", "query": 'container_memory_working_set_bytes{name="minecraft"} / 1048576'},
 ]
 
 

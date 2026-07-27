@@ -447,7 +447,7 @@ class TestMetricsPanel(ApiTestBase):
         self.login("sam", "friend-pw")
         page = self.client.get("/").text
         self.assertIn("Joueurs en ligne", page)
-        self.assertIn("RAM conteneur", page)
+        self.assertIn("RAM serveur", page)
         self.assertIn("4500", page)
 
     def test_sparkline_rendered_when_history_available(self):
@@ -463,7 +463,7 @@ class TestMetricsPanel(ApiTestBase):
         self.assertIn("term-body", frag)                 # la zone rafraîchie = les lignes seules
         self.assertIn("[INFO] ok", frag)
         self.assertNotIn("term-head", frag)              # l'enveloppe (en-tête, filtre) est statique
-        self.assertNotIn("RAM conteneur", frag)
+        self.assertNotIn("RAM serveur", frag)
 
     def test_empty_logs_show_explicit_message_not_silence(self):
         # latest.log fraîchement roté ne contient que du bruit RCON (filtré) :
@@ -479,14 +479,15 @@ class TestMetricsPanel(ApiTestBase):
         self.login("sam", "friend-pw")
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)  # la page vit sans Prometheus
-        self.assertIn("Métriques indisponibles", page.text)
+        self.assertIn("Mesures indisponibles", page.text)
+        self.assertIn("SUR-90", page.text)                         # état codifié + lien doc
 
     def test_missing_value_renders_dash(self):
         from domain.model import MetricReading
-        self.metrics.readings = [MetricReading(key="x", label="CPU conteneur", unit="%", value=None)]
+        self.metrics.readings = [MetricReading(key="x", label="CPU serveur", unit="%", value=None)]
         self.login("sam", "friend-pw")
         page = self.client.get("/").text
-        self.assertIn("CPU conteneur", page)
+        self.assertIn("CPU serveur", page)
         self.assertIn("–", page)
 
     def test_viewer_dashboard_keeps_play_information_only(self):
@@ -1292,7 +1293,8 @@ class TestGameSettingsCard(ApiTestBase):
         self.game._available = False
         self.login("jeremy", "owner-pw")
         page = self.client.get("/").text
-        self.assertIn("Réglages indisponibles", page)
+        self.assertIn("Le jeu ne répond pas", page)
+        self.assertIn("JEU-90", page)
 
 
 class TestPlayerDetailPage(ApiTestBase):
@@ -1735,23 +1737,55 @@ class TestBackupsPage(ApiTestBase):
         self.assertNotIn("/retention", page)                       # la rétention s'applique toute seule
         self.assertNotIn("confirm(", page)                         # jamais de confirm() natif ici
 
-    def test_profile_dialog_has_four_steps(self):
+    def test_profile_dialog_asks_five_questions(self):
+        # Refonte (retour Jeremy 20/07) : chaque étape POSE une question.
         self.login("jeremy", "owner-pw")
         page = self.client.get("/backups").text
         self.assertIn('id="profileDialog"', page)
-        self.assertIn("1 · Quoi sauvegarder", page)
-        self.assertIn("2 · Quand", page)
-        self.assertIn("3 · Combien de temps conserver", page)
-        self.assertIn("4 · Destination", page)
+        self.assertIn("Comment veux-tu l'appeler", page)
+        self.assertIn("Où veux-tu la ranger", page)
+        self.assertIn("Que veux-tu protéger", page)
+        self.assertIn("À quelle fréquence", page)
+        self.assertIn("Combien de temps garder", page)
         self.assertIn('name="include"', page)
         self.assertIn("Tout le serveur", page)
+
+    def test_profile_dialog_is_a_step_by_step_wizard(self):
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/backups").text
+        self.assertIn('id="profileNext"', page)
+        self.assertIn('id="profilePrev"', page)
+        self.assertIn('id="profileDots"', page)
+        # Seule la première étape est visible au chargement, cinq au total.
+        self.assertIn('data-step="0">', page)
+        self.assertIn('data-step="1" hidden', page)
+        self.assertIn('data-step="2" hidden', page)
+        self.assertIn('data-step="3" hidden', page)
+        self.assertIn('data-step="4" hidden', page)
 
     def test_profile_dialog_destination_step_only_local_is_selectable(self):
         self.login("jeremy", "owner-pw")
         page = self.client.get("/backups").text
         self.assertIn('<input type="radio" name="destination" value="local" checked>', page)
         self.assertIn('<input type="radio" name="destination" value="remote" disabled>', page)
-        self.assertIn("bientôt disponible", page)
+        self.assertIn("bientôt", page)
+
+    def test_profile_dialog_destination_uses_drawn_icons_not_emoji(self):
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/backups").text
+        self.assertIn('class="dest-icon"', page)
+        self.assertNotIn("🖥", page)
+        self.assertNotIn("☁", page)
+
+    def test_profile_dialog_shows_destination_path_preview(self):
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/backups").text
+        self.assertIn('id="profileDestPath"', page)
+
+    def test_edit_button_carries_the_real_destination_path(self):
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/backups").text
+        self.assertIn('data-dest="manual"', page)
 
     def test_admin_can_download_archive(self):
         fd, archive_path = tempfile.mkstemp(suffix=".tar.gz")
@@ -2341,8 +2375,17 @@ class TestDegradedDashboard(ApiTestBase):
         self.login("jeremy", "owner-pw")
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)              # la page VIT
-        self.assertIn("Serveur injoignable", page.text)
-        self.assertIn("proxy Docker", page.text)
+        self.assertIn("arrive pas à joindre le serveur", page.text)
+        self.assertIn("SRV-90", page.text)                    # état codifié
+        # le code renvoie vers le guide public (docs/codes.md#srv-90) :
+        self.assertIn("docs/codes.md#srv-90", page.text)
+
+    def test_degraded_states_link_to_the_public_codes_guide(self):
+        self.game._available = False                          # le jeu ne répond pas
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/").text
+        self.assertIn("Le jeu ne répond pas", page)
+        self.assertIn("docs/codes.md#jeu-90", page)
 
 
 @unittest.skipUnless(HAS_HTTP_STACK, "fastapi/httpx requis")
@@ -2546,7 +2589,8 @@ class TestPerformancePage(ApiTestBase):
         self.login("jeremy", "owner-pw")
         page = self.client.get("/performance")
         self.assertEqual(page.status_code, 200)
-        self.assertIn("Prometheus est injoignable", page.text)
+        self.assertIn("Mesures indisponibles", page.text)
+        self.assertIn("SUR-90", page.text)
 
     def test_mspt_chart_shows_annotated_markers(self):
         from datetime import datetime, timezone

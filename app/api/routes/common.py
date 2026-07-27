@@ -42,6 +42,22 @@ def spark_points(history, width: float = 100.0, height: float = 28.0, pad: float
 templates.env.globals["spark_points"] = spark_points
 
 
+# Guide public des messages et codes (dépôt public). Un code "JEU-90" pointe
+# vers l'ancre GitHub "#jeu-90" du fichier docs/codes.md (les titres ### de ce
+# fichier reprennent exactement le code, l'ancre est donc prévisible).
+DOCS_CODES_URL = "https://github.com/jmartinoty/mc-admin/blob/main/docs/codes.md"
+
+
+def docs_code_url(code: str) -> str:
+    """URL du guide pour un code donné (ancre = code en minuscules)."""
+    anchor = str(code or "").strip().lower()
+    return f"{DOCS_CODES_URL}#{anchor}" if anchor else DOCS_CODES_URL
+
+
+templates.env.globals["docs_code_url"] = docs_code_url
+templates.env.globals["docs_codes_url"] = DOCS_CODES_URL
+
+
 def flash_error(request: Request, message: str, *, code: str = "", details: str = "") -> None:
     """Flash d'erreur structuré (retour Jeremy 18/07/2026) : message court en
     langage utilisateur + code stable pour en parler + détails techniques

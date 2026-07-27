@@ -5,7 +5,7 @@
 {% if map_url %}
 <section class="card map-card">
   <div class="map-toolbar">
-    <p class="muted">Carte du monde, servie par mc-admin — l'adresse d'origine reste privée.</p>
+    <p class="muted">Carte du monde en direct.</p>
     <a class="btn" href="/map/embed/" target="_blank" rel="noopener">Ouvrir dans un onglet</a>
   </div>
   <iframe class="map-frame" src="/map/embed/" title="Carte du monde" loading="lazy"></iframe>
@@ -35,10 +35,9 @@
 <section class="card">
   <h2>Activer la carte du monde</h2>
   <p class="muted">mc-admin peut afficher la carte web générée par un mod comme
-    <b>BlueMap</b> ou Dynmap. Le mod s'installe côté serveur (mc-admin ne
-    l'installe pas à ta place) ; ensuite mc-admin va chercher la carte
-    lui-même et l'affiche sous sa propre adresse — l'adresse de la carte peut
-    rester interne, rien de plus à exposer.</p>
+    <b>BlueMap</b> ou Dynmap. Installe d'abord le mod côté serveur (mc-admin ne
+    le fait pas à ta place), puis indique ci-dessous l'adresse de la carte :
+    mc-admin s'occupe de l'afficher ici, en toute sécurité.</p>
   <p>
     {% if map_mod_detected %}
     <span class="pill ok pill-sm"><span class="led"></span>mod de carte détecté : {{ map_mod_detected }}</span>
@@ -49,7 +48,7 @@
   <form method="post" action="/actions/map" class="inline addr-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="server_id" value="{{ map_server_id }}">
-    <label>Adresse de la carte <span class="info-tip" tabindex="0" aria-label="L'adresse où le mod sert sa carte. Depuis mc-admin, l'adresse interne du conteneur fonctionne — BlueMap utilise le port 8100 par défaut.">?<span class="tip-body">L'adresse où le mod sert sa carte. Depuis mc-admin, l'adresse interne du conteneur fonctionne — BlueMap utilise le port 8100 par défaut.</span></span>
+    <label>Adresse de la carte <span class="info-tip" tabindex="0" aria-label="L'adresse où le mod publie sa carte. BlueMap utilise le port 8100 par défaut.">?<span class="tip-body">L'adresse où le mod publie sa carte. BlueMap utilise le port 8100 par défaut.</span></span>
       <input name="map_url" value="{{ map_draft }}" placeholder="{{ map_suggested }}" autocomplete="off">
     </label>
     <button type="submit" class="small" formaction="/actions/map/test">Tester</button>

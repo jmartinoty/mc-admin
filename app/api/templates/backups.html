@@ -40,7 +40,8 @@
               data-id="{{ p.id }}" data-name="{{ p.name }}"
               data-include="{{ p.include | join(',') }}"
               data-hours="{{ p.hours | int }}" data-daily="{{ p.daily_at or '' }}"
-              data-days="{{ p.retention_daily_days }}" data-months="{{ p.retention_monthly_months }}">Modifier</button>
+              data-days="{{ p.retention_daily_days }}" data-months="{{ p.retention_monthly_months }}"
+              data-dest="{{ p.dest }}">Modifier</button>
       <form method="post" action="/actions/backup-profiles/{{ p.id }}/toggle">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="enabled" value="{{ '0' if p.enabled else '1' }}">
@@ -78,55 +79,81 @@
         aria-labelledby="profileDialogTitle">
   <form method="post" action="/actions/backup-profiles" class="player-dialog-box" id="profileForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <h2 id="profileDialogTitle">Nouvelle configuration</h2>
-    <label>Nom
+    <h2 id="profileDialogTitle" class="sr-only">Nouvelle configuration de sauvegarde</h2>
+    <div class="wizard-dots" id="profileDots" aria-hidden="true">
+      <span class="wizard-dot on" data-step="0"></span>
+      <span class="wizard-dot" data-step="1"></span>
+      <span class="wizard-dot" data-step="2"></span>
+      <span class="wizard-dot" data-step="3"></span>
+      <span class="wizard-dot" data-step="4"></span>
+    </div>
+
+    <section class="wizard-step" data-step="0">
+      <p class="wizard-q">Comment veux-tu l'appeler ?</p>
+      <label class="sr-only" for="profileName">Nom de la configuration</label>
       <input name="name" id="profileName" maxlength="40" required placeholder="ex. Serveur complet" autocomplete="off">
-    </label>
-    <fieldset class="profile-fieldset">
-      <legend>1 · Quoi sauvegarder</legend>
+      <p class="muted wizard-help">Un nom pour t'y retrouver quand tu auras plusieurs sauvegardes.</p>
+    </section>
+
+    <section class="wizard-step" data-step="1" hidden>
+      <p class="wizard-q">Où veux-tu la ranger ?</p>
+      <div class="dest-options">
+        <label class="dest-option is-active">
+          <input type="radio" name="destination" value="local" checked>
+          <svg class="dest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/>
+            <line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/>
+          </svg>
+          <span><b>Sur ce serveur</b> <span class="muted">— rapide, mais au même endroit que le jeu</span>
+            <span class="muted dest-path" id="profileDestPath">profiles/…</span></span>
+        </label>
+        <label class="dest-option is-disabled" title="Bientôt disponible">
+          <input type="radio" name="destination" value="remote" disabled>
+          <svg class="dest-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/>
+          </svg>
+          <span><b>Ailleurs (cloud, autre disque)</b> <span class="badge">bientôt</span>
+            <span class="muted">— à l'abri d'une panne de ce serveur</span></span>
+        </label>
+      </div>
+    </section>
+
+    <section class="wizard-step" data-step="2" hidden>
+      <p class="wizard-q">Que veux-tu protéger ?</p>
       {% for key, label, hint in profile_categories %}
       <label class="profile-cat"><input type="checkbox" name="include" value="{{ key }}"
         {% if key == "all" %}data-exclusive="1"{% endif %}>
         <span><b>{{ label }}</b> <span class="muted">— {{ hint }}</span></span></label>
       {% endfor %}
-    </fieldset>
-    <fieldset class="profile-fieldset">
-      <legend>2 · Quand</legend>
+    </section>
+
+    <section class="wizard-step" data-step="3" hidden>
+      <p class="wizard-q">À quelle fréquence ?</p>
       <div class="inline sched-form">
+        <label class="sr-only" for="profileHours">Fréquence</label>
         <select name="hours" id="profileHours">
-          <option value="0">manuel uniquement</option>
+          <option value="0">quand je le demande</option>
           {% for h in (6, 12, 24, 48) %}<option value="{{ h }}">toutes les {{ h }} h</option>{% endfor %}
           <option value="daily">tous les jours à…</option>
         </select>
         <input type="time" name="time_hhmm" id="profileTime" value="04:00" hidden>
       </div>
-    </fieldset>
-    <fieldset class="profile-fieldset">
-      <legend>3 · Combien de temps conserver</legend>
+    </section>
+
+    <section class="wizard-step" data-step="4" hidden>
+      <p class="wizard-q">Combien de temps garder les copies ?</p>
       <div class="inline retention-form">
-        <label><input name="retention_daily_days" id="profileDays" type="number" min="0" max="365" value="0" class="mini-number"> jours</label>
+        <label>Garder <input name="retention_daily_days" id="profileDays" type="number" min="0" max="365" value="0" class="mini-number"> jours</label>
         <label>+ <input name="retention_monthly_months" id="profileMonths" type="number" min="0" max="120" value="0" class="mini-number"> mensuelles</label>
       </div>
-      <p class="muted rules-hint">0 jour = conserver toutes les archives sans limite.</p>
-    </fieldset>
-    <fieldset class="profile-fieldset">
-      <legend>4 · Destination</legend>
-      <div class="dest-options">
-        <label class="dest-option is-active">
-          <input type="radio" name="destination" value="local" checked>
-          <span class="dest-icon" aria-hidden="true">🖥</span>
-          <span><b>Local</b> <span class="muted">— ce NAS, comme aujourd'hui</span></span>
-        </label>
-        <label class="dest-option is-disabled" title="Bientôt disponible">
-          <input type="radio" name="destination" value="remote" disabled>
-          <span class="dest-icon" aria-hidden="true">☁</span>
-          <span><b>Distant / Cloud</b> <span class="badge">bientôt disponible</span></span>
-        </label>
-      </div>
-    </fieldset>
+      <p class="muted wizard-help">Laisse 0 pour tout garder sans limite. Au-delà, les plus vieilles copies sont supprimées automatiquement.</p>
+    </section>
+
     <div class="dialog-actions">
       <button type="button" class="txtbtn" id="profileCancel">Annuler</button>
-      <button id="profileSubmit">Créer</button>
+      <button type="button" class="txtbtn" id="profilePrev" hidden>Précédent</button>
+      <button type="button" class="small" id="profileNext">Suivant</button>
+      <button id="profileSubmit" hidden>Créer</button>
     </div>
   </form>
 </dialog>
@@ -227,14 +254,14 @@
           <div class="backup-acts archive-entry-actions">
             {% if can_backup_download %}
             {% if operation_locked %}
-            <span class="button small disabled" title="Indisponible pendant une opération backup/restore">Télécharger</span>
+            <span class="button small disabled" title="Indisponible pendant une sauvegarde ou une restauration">Télécharger</span>
             {% else %}
             <a class="button small" href="/backups/{{ a.filename }}/download">Télécharger</a>
             {% endif %}
             {% endif %}
             {% if can_restore %}
             {% if operation_locked %}
-            <button class="danger small" disabled title="Une opération backup/restore est déjà en cours">Restaurer</button>
+            <button class="danger small" disabled title="Une sauvegarde ou une restauration est déjà en cours">Restaurer</button>
             {% else %}
             <form method="post" action="/actions/restore" class="js-restore-form"
                   data-archive="{{ a.filename }}"
@@ -393,7 +420,59 @@
     var pDays = document.getElementById("profileDays");
     var pMonths = document.getElementById("profileMonths");
     var pSubmit = document.getElementById("profileSubmit");
+    var pDestPath = document.getElementById("profileDestPath");
     var checks = pForm.querySelectorAll("input[name='include']");
+
+    // Étapes : une seule visible à la fois, navigation Suivant/Précédent.
+    var pSteps = Array.prototype.slice.call(pForm.querySelectorAll(".wizard-step"));
+    var pDots = Array.prototype.slice.call(document.querySelectorAll("#profileDots .wizard-dot"));
+    var pPrev = document.getElementById("profilePrev");
+    var pNext = document.getElementById("profileNext");
+    var pStepIndex = 0;
+    function showStep(i) {
+      pStepIndex = i;
+      pSteps.forEach(function (s, idx) { s.hidden = idx !== i; });
+      pDots.forEach(function (d, idx) { d.classList.toggle("on", idx <= i); });
+      pPrev.hidden = i === 0;
+      pNext.hidden = i === pSteps.length - 1;
+      pSubmit.hidden = i !== pSteps.length - 1;
+    }
+    var STEP_WHAT = 2;  // « Que veux-tu protéger ? » (catégories)
+    pNext.addEventListener("click", function () {
+      if (pStepIndex === 0 && !pName.reportValidity()) return;
+      if (pStepIndex === STEP_WHAT) {
+        var any = Array.prototype.some.call(checks, function (b) { return b.checked; });
+        if (!any) {
+          window.mc && window.mc.toast && window.mc.toast("Choisis au moins une chose à protéger.");
+          return;
+        }
+      }
+      showStep(Math.min(pStepIndex + 1, pSteps.length - 1));
+    });
+    pPrev.addEventListener("click", function () { showStep(Math.max(pStepIndex - 1, 0)); });
+    // Entrée dans un champ = étape suivante, jamais un envoi prématuré du formulaire.
+    pForm.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && pStepIndex !== pSteps.length - 1) {
+        e.preventDefault();
+        pNext.click();
+      }
+    });
+
+    // Aperçu du chemin de destination — jamais éditable (contrainte de
+    // sécurité : dest reste DÉRIVÉ, jamais un champ libre). En édition, le
+    // vrai chemin est affiché (il ne bouge plus, cf. update_backup_profile) ;
+    // en création, un aperçu suit la saisie du nom (même règle de slug que
+    // le serveur : slugify() dans adapters/backup_profiles.py).
+    var editingDest = null;
+    function slugifyPreview(name) {
+      var slug = String(name || "").toLowerCase().trim()
+        .replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+      return slug.slice(0, 32) || "profil";
+    }
+    pName.addEventListener("input", function () {
+      if (editingDest) return;
+      pDestPath.textContent = "profiles/" + slugifyPreview(pName.value) + "/";
+    });
 
     pHours.addEventListener("change", function () {
       if (pHours.value === "daily") pTime.removeAttribute("hidden");
@@ -418,6 +497,8 @@
       pTitle.textContent = data ? "Modifier « " + data.name + " »" : "Nouvelle configuration";
       pSubmit.textContent = data ? "Enregistrer" : "Créer";
       pName.value = data ? data.name : "";
+      editingDest = data ? data.dest : null;
+      pDestPath.textContent = (editingDest ? editingDest : "profiles/" + slugifyPreview(pName.value)) + "/";
       var included = data ? data.include.split(",") : ["all"];
       Array.prototype.forEach.call(checks, function (box) {
         box.checked = included.indexOf(box.value) !== -1;
@@ -429,6 +510,7 @@
       }
       pDays.value = data ? data.days : "0";
       pMonths.value = data ? data.months : "0";
+      showStep(0);
       if (profileDialog.showModal) profileDialog.showModal();
       else profileDialog.setAttribute("open", "");
       pName.focus();
@@ -441,7 +523,7 @@
           id: btn.getAttribute("data-id"), name: btn.getAttribute("data-name"),
           include: btn.getAttribute("data-include"), hours: btn.getAttribute("data-hours"),
           daily: btn.getAttribute("data-daily"), days: btn.getAttribute("data-days"),
-          months: btn.getAttribute("data-months"),
+          months: btn.getAttribute("data-months"), dest: btn.getAttribute("data-dest"),
         });
       });
     });
@@ -453,7 +535,8 @@
       var any = Array.prototype.some.call(checks, function (b) { return b.checked; });
       if (!any) {
         e.preventDefault();
-        window.mc && window.mc.toast && window.mc.toast("Choisis au moins une catégorie à sauvegarder.");
+        showStep(STEP_WHAT);
+        window.mc && window.mc.toast && window.mc.toast("Choisis au moins une chose à protéger.");
       }
     });
   }

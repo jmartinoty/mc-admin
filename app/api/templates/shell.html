@@ -148,6 +148,9 @@
         <h2 id="errorDetailsTitle">Détails de l'erreur{% if flash.code %} · {{ flash.code }}{% endif %}</h2>
         <pre class="err-details" id="errorDetailsText">{{ flash.details }}</pre>
         <div class="dialog-actions">
+          {% if flash.code %}
+          <a class="txtbtn" href="{{ docs_code_url(flash.code) }}" target="_blank" rel="noopener">En savoir plus ↗</a>
+          {% endif %}
           <button type="button" class="txtbtn" id="errorDetailsCopy">Copier</button>
           <button type="button" id="errorDetailsClose" autofocus>Fermer</button>
         </div>
@@ -170,6 +173,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/shell.js?v=20260720-term2"></script>
+<script src="/static/shell.js?v=20260720-codes"></script>
 {% block page_scripts %}{% endblock %}
 {% endblock %}

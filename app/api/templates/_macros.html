@@ -1,0 +1,10 @@
+{# Macros partagées. Import : {% from "_macros.html" import degraded %} #}
+
+{# État dégradé inline : message simple en langage courant + code stable
+   cliquable vers le guide public (docs/codes.md). Les détails techniques
+   vivent dans la doc, jamais dans l'interface (retour Jeremy 20/07/2026). #}
+{% macro degraded(message, code) -%}
+<p class="muted degraded">{{ message }}
+  {%- if code %} <a class="err-code err-code-link" href="{{ docs_code_url(code) }}"
+     target="_blank" rel="noopener" title="En savoir plus sur ce message">{{ code }}</a>{% endif %}</p>
+{%- endmacro %}

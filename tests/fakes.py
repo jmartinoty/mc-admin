@@ -513,7 +513,7 @@ class FakeMetrics:
     def _init_readings(self, readings=None, available=True):
         self.readings = list(readings) if readings is not None else [
             MetricReading(key="players", label="Joueurs en ligne", unit="", value=2.0),
-            MetricReading(key="ram", label="RAM conteneur", unit="Mio", value=4500.0,
+            MetricReading(key="ram", label="RAM serveur", unit="Mio", value=4500.0,
                           history=(4100.0, 4300.0, 4500.0)),
         ]
         self._available = available
