@@ -7,6 +7,12 @@ fix, même hors release.
 
 ## 2026-07-27
 
+- **Notes de version illisibles dans le dialogue de mise à jour**
+  (constaté par Jeremy sur la carte 0.12.0). Le Markdown brut de l'API
+  GitHub était affiché tel quel : `###`, `**` et retours à la ligne du
+  fichier source coupaient les phrases. Fix : mini-rendu stdlib
+  (`api/release_notes.py`) — titres/listes/gras/liens, texte échappé
+  d'abord, lignes recollées (`5a7539a`).
 - **Mise à jour en un clic : mc-doorman (et mc-op-levels dans le compose
   exemple) restaient sur l'ancienne image après une mise à jour.** La
   commande du one-shot `mc-admin-updater` ne recréait pas tous les

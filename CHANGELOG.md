@@ -4,6 +4,13 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.12.1 — 2026-07-27
+
+### Mise à jour
+- Les notes de version s'affichent désormais proprement dans le dialogue
+  de mise à jour (titres, listes, gras) au lieu du Markdown brut avec des
+  phrases coupées en plein milieu.
+
 ## v0.12.0 — 2026-07-27
 
 ### Sécurité (nouveau)

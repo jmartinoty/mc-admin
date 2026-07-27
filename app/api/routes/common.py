@@ -41,6 +41,11 @@ def spark_points(history, width: float = 100.0, height: float = 28.0, pad: float
 
 templates.env.globals["spark_points"] = spark_points
 
+# Notes de release (bandeau MAJ) : Markdown GitHub -> HTML sûr et lisible.
+from api.release_notes import render_release_notes  # noqa: E402 — après l'env Jinja
+
+templates.env.filters["release_notes"] = render_release_notes
+
 
 # Guide public des messages et codes (dépôt public). Un code "JEU-90" pointe
 # vers l'ancre GitHub "#jeu-90" du fichier docs/codes.md (les titres ### de ce

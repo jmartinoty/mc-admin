@@ -53,7 +53,7 @@
     <h2 id="appUpdateTitle">mc-admin v{{ app_update.latest.version }}
       <span class="muted">— tu utilises la v{{ app_update.current_version }}</span></h2>
     {% if app_update.latest.notes %}
-    <div class="app-update-notes">{{ app_update.latest.notes }}</div>
+    <div class="app-update-notes">{{ app_update.latest.notes | release_notes }}</div>
     {% endif %}
     {% if app_update.latest.url %}
     <p><a class="muted" href="{{ app_update.latest.url }}" target="_blank" rel="noopener">notes de version complètes ↗</a></p>

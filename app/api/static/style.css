@@ -291,7 +291,13 @@ summary:focus-visible,
   background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .app-update-banner p { margin: 0; }
 .app-update-dialog { width: min(560px, calc(100vw - 2rem)); }
-.app-update-notes { white-space: pre-line; max-height: 22em; overflow: auto; }
+.app-update-notes { max-height: 22em; overflow: auto; }
+.app-update-notes h3 { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; color: var(--accent); margin: 1em 0 .3em; }
+.app-update-notes h3:first-child { margin-top: .2em; }
+.app-update-notes p { margin: .4em 0; }
+.app-update-notes ul { margin: .3em 0 .7em; padding-left: 1.15em; }
+.app-update-notes li { margin: .35em 0; }
+.app-update-notes code { font-size: .92em; }
 .updating-wrap { min-height: 80vh; display: grid; place-items: center; }
 .updating-card { max-width: 30rem; text-align: center; }
 .updating-dots { display: flex; gap: .5rem; justify-content: center; margin: 1rem 0; }
