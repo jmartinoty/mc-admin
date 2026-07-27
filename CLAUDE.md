@@ -1009,9 +1009,109 @@ commençant par les sauvegardes ; « ajouter un serveur » viendra ensuite.
 - **Vérifié en réel le 20/07** : portier lancé dans le vrai réseau `mc_playit`
   et interrogé par un client parlant le protocole — MOTD correct, ping/pong
   renvoyé, refus au login avec le message de la consigne.
-- **RESTE À FAIRE** : portier automatique pendant une restauration
-  (`docs/roadmap.md` n° 7b) — délibérément séparé, le worker a 8 points
-  d'arrêt/démarrage et mérite sa propre itération testée.
+- **Portier automatique pendant une restauration (V7b, 22/07/2026)** : ✅
+  implémenté. `restore_worker.py` enveloppe son contrôleur Minecraft dans
+  `DoormanAwareController` : `stop()` arrête le serveur PUIS engage le portier
+  (best-effort — un portier absent dégrade seulement le message, jamais la
+  restauration), `start()` RELÈVE le portier (obligatoire, sinon conflit
+  d'IP) PUIS démarre Minecraft. Les ~8 points stop/start du worker (nominal,
+  rollback, reprise) sont couverts d'un seul geste, SANS toucher à la logique
+  transactionnelle — et la reprise gagne un garde-fou : un portier resté en
+  poste après un crash est désormais relevé avant le redémarrage.
+  `DoormanController` pilote mc-doorman via docker-py (le worker a déjà le
+  socket) ; `release()` tolère un portier inexistant (rien ne tient l'adresse)
+  mais lève si un portier VIVANT refuse de rendre l'IP. La consigne
+  « restauration » est amorcée par mc-admin (`DoormanPort.prime()` — écrit la
+  consigne sans démarrer) dans `_start_restore_after_backup`, best-effort.
+  Env `MC_DOORMAN_CONTAINER` sur le conteneur mc-restore (vide = restauration
+  muette, comportement V5 inchangé). Worker testé de bout en bout (fakes) ;
+  reste à exercer le flux APP complet en réel.
+
+- **Sessions utilisateur — appareils connectés (22/07/2026)** : ✅ implémenté.
+  `SessionRegistry` (`app/api/sessions.py`) vit dans la couche TRANSPORT, comme
+  `login_security.py` — le domaine ignore les sessions HTTP (détail d'auth, pas
+  de règle métier) : ni port, ni `Permission`, ni audit domaine (cohérent avec
+  les autres actions self-service login/logout/mot de passe). Un `sid` opaque
+  (`secrets.token_urlsafe`) par connexion est posé dans le cookie signé au
+  login/setup et VALIDÉ à chaque requête par `_current` (sid absent du registre
+  = révoqué → déconnexion). Cookies hérités (émis avant la fonctionnalité)
+  enrôlés à la volée dans `_current` — aucune reconnexion forcée ; le cookie
+  étant signé, un `sid` ne peut pas être retiré pour contourner la révocation.
+  **Registre PERSISTÉ** (`/data/sessions.json`, 0600, primitives `atomic_json`)
+  et non pas seulement en mémoire : autoritatif en mémoire pour la validation
+  rapide (pas d'I/O sous le polling), write-through sur mutations (register/
+  logout/revoke). Conséquence VOULUE, distincte des `InMemory*` : la révocation
+  survit à un redéploiement de mc-admin ET personne n'est déconnecté en masse
+  au redémarrage. Le « dernier accès » reste en mémoire (best-effort, purement
+  cosmétique). Self-service : page « Appareils connectés » (popover profil),
+  révoquer un appareil ou « tous les autres » ; `revoke()` exige le `username`
+  (on ne touche jamais la session d'autrui). TTL 14 j (aligné sur le cookie),
+  plafond par utilisateur (anti-gonflement). ⚠️ Comme tout l'état à copie
+  mémoire autoritative, ceci suppose UN SEUL worker uvicorn (déjà une
+  contrainte du projet).
+
+- **2FA / TOTP (22/07/2026)** : ✅ implémenté. TOTP RFC 6238 codé en STDLIB
+  (`app/api/totp.py` — `hmac`/`hashlib`/`struct`/`base64`/`secrets`), doctrine
+  maison « pas de dépendance quand la stdlib suffit » (comme le RCON et le
+  portier ; `pyotp` volontairement écarté). Fonctions PURES (génération/
+  vérification, tolérance ±1 pas de 30 s, comparaison temps constant, URI
+  otpauth), testées contre le vecteur RFC. Secrets par utilisateur dans
+  `/data/totp.json` (`JsonTotp`, 0600 comme `passwords.json`) : schéma
+  `{user: {secret, confirmed}}` — un secret non confirmé (config en cours)
+  n'exige PAS encore de 2FA. Placement TRANSPORT (routes auth, pas le domaine),
+  self-service comme le mot de passe : page « Sécurité » (popover profil) pour
+  activer (générer → scanner/saisir la clé → confirmer avec un code) et
+  désactiver (exige le mot de passe : personne ne retire la 2FA depuis une
+  session laissée ouverte). Login à DEUX étapes : mot de passe correct + 2FA
+  active → `pending_2fa` en session (TTL 5 min) + étape « code »
+  (`/login/verify`) ; le mot de passe correct fait `cancel()` (pas `success()`)
+  sur l'anti-bruteforce pour ne PAS relâcher le compteur tant que le 2e facteur
+  n'est pas validé, et les tentatives TOTP passent par le même limiter (mêmes
+  buckets IP+pseudo). QR non embarqué (clé formatée + lien otpauth affichés,
+  saisie manuelle) — un encodeur QR pur-python serait la seule pièce manquante,
+  volontairement reportée pour rester sans dépendance.
+
+- **API locale documentée `/api/v1` (22/07/2026)** : ✅ implémenté. Sous-app
+  FastAPI (`app/api/api_v1.py`, `create_api_app`) MONTÉE sous `/api/v1` avec sa
+  propre doc OpenAPI (`/api/v1/docs`, `/api/v1/openapi.json`) — les routes
+  navigateur (HTML) restent hors du schéma. Elle partage les MÊMES objets que
+  l'app parente (service, rôles, jetons) posés sur son `app.state`. Auth par
+  jeton porteur (`Authorization: Bearer`) : `ApiTokenStore`
+  (`app/api/api_tokens.py`, `/data/api_tokens.json`, 0600) stocke le SHA-256 du
+  jeton, jamais le secret (montré une seule fois à la création, comparé en
+  temps constant). Un jeton est lié à un RÔLE existant et se résout en un
+  `User` synthétique (`api:<label>`) → l'API réutilise EXACTEMENT la RBAC et
+  l'audit d'AdminService (pas de logique dupliquée, mêmes barrières que l'UI ;
+  CSRF non applicable — le porteur est explicite, pas un cookie ambiant).
+  Endpoints en LECTURE SEULE (barrière STATUS) : `/ping` (ouvert), `/status`,
+  `/players`, `/metrics`, `/infra`, chacun avec un `response_model` Pydantic.
+  Gestion des jetons : page owner « Jetons d'API » (barrière USER_MANAGE via
+  `authorize_api_tokens`/`record_api_token_change` dans AccountsMixin — le
+  stockage vit en transport comme les sessions, mais RBAC+audit passent par le
+  service ; création/révocation auditées `phase=api_token_created|revoked`,
+  jamais le secret). ⚠️ La doc Swagger UI charge son JS depuis un CDN (OK en
+  tailnet ; l'`openapi.json` machine-lisible, lui, reste exploitable hors
+  ligne). Endpoints mutants et QR : reportés.
+
+- **Historique des incidents (22/07/2026)** : ✅ implémenté. AUCUNE nouvelle
+  sonde — on rend PERSISTANTES les transitions que `HealthWatcher` et
+  `PerfWatcher` détectaient déjà mais jetaient (notification fire-and-forget).
+  `IncidentLogPort`/`JsonIncidents` (`/data/incidents.json`, schéma
+  `{open: {subject: rec}, history: [...]}`) : les watchers ÉCRIVENT aux points
+  d'alerte (`open`) et de rétablissement (`close`) — observation passive,
+  best-effort (un journal d'incidents en panne ne casse jamais la
+  surveillance), PAS via AdminService (comme PlayerLogWatcher). `open` est
+  idempotent par sujet (une chute déjà ouverte n'en crée pas une 2ᵉ) et
+  l'ADAPTER horodate (clock injectable) — le watcher dit juste « X down/up ».
+  Le SERVICE lit (`AdminService.incidents`, barrière STATUS comme
+  `performance_events`) et CORRÈLE les actions correctives depuis le journal
+  d'audit (restart/restore/backup/update/maintenance tombant dans la fenêtre
+  [début, fin ou maintenant]), n'exposant que le genre + l'instant (jamais
+  l'auteur ni le détail — la disponibilité n'est pas un secret). Deux instances
+  de `JsonIncidents` visent le même fichier (watchers écrivent, service lit),
+  comme `SqlitePlayerHistory`. Page `/incidents` (tous rôles avec STATUS) :
+  durée, « en cours » vs clos, interventions corrélées. Couvre indisponibilité
+  (serveur + compagnons), ralentissement MSPT soutenu, espace disque bas.
 
 ### Roadmap V5.x (consolidations post-V5 — ✅ livrées au fil de l'eau)
 

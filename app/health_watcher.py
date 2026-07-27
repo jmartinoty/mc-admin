@@ -23,10 +23,11 @@ import threading
 class _Watched:
     """État anti-bruit d'UN conteneur surveillé (streak + alerte émise)."""
 
-    def __init__(self, title: str, label: str, container) -> None:
+    def __init__(self, title: str, label: str, container, subject: str) -> None:
         self.title = title    # préfixe du titre de notification (« Serveur », « playit »)
         self.label = label    # sujet de la phrase du corps
         self.container = container
+        self.subject = subject  # clé stable de l'incident ("server" ou nom du conteneur)
         self.down_streak = 0
         self.alerted = False
 
@@ -34,17 +35,18 @@ class _Watched:
 class HealthWatcher:
     def __init__(self, container, notifier, poll_seconds: float = 30.0,
                  down_polls_before_alert: int = 3,
-                 watched_store=None, port_factory=None) -> None:
+                 watched_store=None, port_factory=None, incidents=None) -> None:
         # `container` = le serveur Minecraft ; les compagnons viennent du
         # STORE (watched_containers.json), relu à chaque sonde : un ajout
         # dans l'UI est effectif à la sonde suivante, sans redémarrage.
         # `port_factory(name) -> ContainerPort` construit l'accès à un
         # compagnon (DockerProxyContainer en prod, fake en test).
-        self._server = _Watched("Serveur", "le serveur Minecraft", container)
+        self._server = _Watched("Serveur", "le serveur Minecraft", container, "server")
         self._store = watched_store
         self._port_factory = port_factory
         self._companions: dict[str, _Watched] = {}
         self._notifier = notifier
+        self._incidents = incidents  # IncidentLogPort | None (best-effort)
         self._poll_seconds = poll_seconds
         self._threshold = down_polls_before_alert
         self._stop = threading.Event()
@@ -86,7 +88,7 @@ class HealthWatcher:
         for name in names:
             if name not in self._companions:
                 self._companions[name] = _Watched(
-                    name, f"le conteneur « {name} »", self._port_factory(name))
+                    name, f"le conteneur « {name} »", self._port_factory(name), name)
         for gone in set(self._companions) - set(names):
             del self._companions[gone]
         return [self._companions[name] for name in names]
@@ -102,6 +104,7 @@ class HealthWatcher:
                     f"{watched.title} rétabli",
                     f"{watched.label.capitalize()} est de nouveau en ligne.", "info",
                     event="health")
+                self._record_incident("close", watched.subject)
             watched.down_streak = 0
             watched.alerted = False
             return
@@ -114,4 +117,21 @@ class HealthWatcher:
                 "error",
                 event="health",
             )
+            self._record_incident(
+                "open", watched.subject, "availability", watched.title,
+                f"{watched.title} arrêté")
             watched.alerted = True
+
+    def _record_incident(self, action: str, subject: str, kind: str = "",
+                         label: str = "", detail: str = "") -> None:
+        """Persiste la transition (best-effort, comme la notification) : un
+        journal d'incidents indisponible ne doit jamais casser la surveillance."""
+        if self._incidents is None:
+            return
+        try:
+            if action == "open":
+                self._incidents.open(subject, kind, label, detail)
+            else:
+                self._incidents.close(subject)
+        except Exception:  # noqa: BLE001 — best-effort, jamais bloquant
+            pass

@@ -4,6 +4,31 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.12.0 — 2026-07-27
+
+### Sécurité (nouveau)
+- **Double authentification (2FA)** en self-service : activation sur la
+  nouvelle page « Sécurité » avec n'importe quelle application TOTP
+  (Google Authenticator, Aegis, FreeOTP…). Un code est demandé après le
+  mot de passe ; la désactivation exige le mot de passe actuel.
+- **Appareils connectés** : chacun voit ses sessions ouvertes (appareil,
+  adresse, dernière activité) et peut les déconnecter à distance — une
+  révocation survit aux redémarrages de mc-admin.
+- **Jetons d'API** (administrateur) : accès scripté via la nouvelle API
+  locale documentée `/api/v1`. Un jeton est lié à un rôle existant (mêmes
+  permissions, même journal d'audit que l'interface), montré une seule
+  fois à la création — seule son empreinte est stockée.
+
+### Fiabilité
+- **Historique des incidents** : les indisponibilités du serveur, les
+  périodes de lag et les alertes disque sont désormais persistées et
+  corrélées aux actions qui les entourent (page dédiée).
+- **Restauration annoncée aux joueurs** : pendant qu'une restauration
+  arrête le serveur, le portier de maintenance tient sa place — la liste
+  des serveurs affiche « Restauration en cours » au lieu d'une connexion
+  refusée. Aucun réglage si le portier n'est pas installé : la
+  restauration reste simplement silencieuse, comme avant.
+
 ## v0.11.0 — 2026-07-27
 
 ### Sauvegardes

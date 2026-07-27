@@ -1,0 +1,65 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Jetons d'API</h1>
+
+<section class="card">
+  <p class="muted rules-hint">Permet à un script ou au tableau de bord maison
+    de lire l'état du serveur via <span class="mono">/api/v1</span>
+    (<a href="/api/v1/docs">documentation</a>). Chaque jeton agit avec le rôle
+    choisi — préfère un rôle en lecture seule.</p>
+
+  {% if new_token %}
+  <div class="card" style="border-color:var(--accent)">
+    <p><b>Jeton créé.</b> Copie-le maintenant : il ne sera plus jamais affiché.</p>
+    <p class="mono" style="word-break:break-all">{{ new_token }}</p>
+    <p class="muted">Utilisation : <span class="mono">Authorization: Bearer &lt;jeton&gt;</span></p>
+  </div>
+  {% endif %}
+
+  {% if tokens %}
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Jetons d'API</caption>
+      <thead><tr><th>Nom</th><th>Rôle</th><th>Créé le</th><th></th></tr></thead>
+      <tbody>
+        {% for t in tokens %}
+        <tr>
+          <td><b>{{ t.label }}</b></td>
+          <td>{{ t.role }}</td>
+          <td>{{ t.created }}</td>
+          <td class="backup-acts">
+            <form method="post" action="/actions/api-tokens/revoke" class="js-confirm-form"
+                  data-confirm="Révoquer le jeton « {{ t.label }} » ? Les scripts qui l'utilisent cesseront d'accéder à l'API.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="token_id" value="{{ t.token_id }}">
+              <button type="button" class="txtbtn danger-link js-confirm-open">Révoquer</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Aucun jeton pour l'instant.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Créer un jeton</h2>
+  <form method="post" action="/actions/api-tokens/create" class="server-add-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="inline sched-form">
+      <label>Nom
+        <input name="label" required maxlength="64" placeholder="ex. nas-dashboard" autocomplete="off">
+      </label>
+      <label>Rôle
+        <select name="role">
+          {% for r in roles %}<option value="{{ r }}" {% if r == "viewer" %}selected{% endif %}>{{ r }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <button class="small">Créer le jeton</button>
+  </form>
+</section>
+{% endblock %}

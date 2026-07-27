@@ -611,6 +611,25 @@ class PlayerSummary:
 
 
 @dataclass(frozen=True)
+class Incident:
+    """Un épisode d'indisponibilité ou de dégradation, borné dans le temps
+    (V6.x historique des incidents). Agrège les transitions déjà détectées par
+    les watchers (chute/rétablissement) rendues PERSISTANTES.
+
+    `ended_at=None` -> incident toujours en cours. `kind` distingue la nature
+    (`availability` conteneur down, `performance` lag MSPT, `disk` espace bas)
+    pour un affichage/filtre cohérent."""
+
+    id: str
+    subject: str            # "server" | nom de conteneur | "mspt" | "disk"
+    kind: str               # "availability" | "performance" | "disk"
+    label: str              # libellé humain (« Serveur », « playit », « Lag serveur »)
+    started_at: datetime
+    ended_at: datetime | None = None
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class PlayerStats:
     """Statistiques vanilla d'un joueur (V5.x), lues depuis les fichiers
     `stats/*.json` du monde. Comptées par le SERVEUR depuis la création du

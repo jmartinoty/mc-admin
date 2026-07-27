@@ -1,0 +1,56 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Sécurité</h1>
+
+<section class="card">
+  <h2>Double authentification (2FA)</h2>
+  <p class="muted rules-hint">Un code à usage unique, généré par une application
+    sur ton téléphone (Google Authenticator, Aegis, FreeOTP…), demandé en plus
+    du mot de passe à chaque connexion.</p>
+
+  {% if twofa_enabled %}
+  <p><span class="chip ok">Activée</span> Ton compte demande un code à la connexion.</p>
+  <form method="post" action="/security/disable" class="po-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <p class="muted">Pour désactiver, confirme avec ton mot de passe.</p>
+    <div class="po-row">
+      <input type="password" name="current_password" placeholder="Mot de passe actuel"
+             autocomplete="current-password" required>
+      <button class="po-save danger">Désactiver</button>
+    </div>
+  </form>
+
+  {% elif twofa_pending %}
+  <ol class="rules-hint muted">
+    <li>Ajoute ce compte dans ton application d'authentification :
+      scanne le QR (si ton app le permet depuis l'URL ci-dessous) ou saisis la
+      clé manuellement.</li>
+    <li>Saisis le code à 6 chiffres affiché pour confirmer.</li>
+  </ol>
+  <p><b>Clé secrète</b> : <span class="mono">{{ twofa_secret }}</span></p>
+  <details class="po-acc">
+    <summary class="po-item">Lien otpauth (avancé)</summary>
+    <p class="mono" style="word-break:break-all">{{ twofa_uri }}</p>
+  </details>
+  <form method="post" action="/security/enable" class="po-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="po-row">
+      <input name="code" inputmode="numeric" autocomplete="one-time-code"
+             pattern="[0-9]{6}" maxlength="6" placeholder="Code à 6 chiffres" required>
+      <button class="po-save">Confirmer et activer</button>
+    </div>
+  </form>
+  <form method="post" action="/security/cancel">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="txtbtn">Annuler la configuration</button>
+  </form>
+
+  {% else %}
+  <p><span class="chip">Désactivée</span></p>
+  <form method="post" action="/security/start">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="small">Activer la double authentification</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

@@ -38,6 +38,9 @@ class NotConfiguredDoorman:
     def is_running(self) -> bool:
         return False
 
+    def prime(self, motd: str, kick: str) -> None:
+        return None  # aucun portier à amorcer : best-effort, pas d'erreur
+
 
 class DockerDoorman:
     def __init__(
@@ -120,3 +123,10 @@ class DockerDoorman:
         except Exception:  # noqa: BLE001 — conteneur absent/proxy muet = pas en place
             return False
         return getattr(container, "status", None) == "running"
+
+    def prime(self, motd: str, kick: str) -> None:
+        """Écrit la consigne sans démarrer le conteneur : le worker mc-restore
+        prendra le poste lui-même pendant l'arrêt de Minecraft (V7b). Écrire la
+        consigne côté mc-admin reste le pattern one-shot (aucun paramètre par
+        l'API Docker). Ne touche PAS au proxy — simple écriture de fichier."""
+        self._write_consigne(motd, kick)

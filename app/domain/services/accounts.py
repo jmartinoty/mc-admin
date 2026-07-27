@@ -29,6 +29,17 @@ class AccountsMixin:
         self._authorize(actor, Permission.USER_MANAGE)
         self._record(actor, Permission.USER_MANAGE, "allowed", detail)
 
+    def authorize_api_tokens(self, user: User) -> None:
+        """Barrière RBAC de la page Jetons d'API (stockage côté API, comme les
+        sessions) : gérer des jetons revient à créer des identifiants porteurs
+        d'un rôle — même sensibilité que la gestion des comptes."""
+        self._authorize(user, Permission.USER_MANAGE)
+
+    def record_api_token_change(self, actor: User, detail: str) -> None:
+        """Trace la création/révocation d'un jeton d'API (jamais le secret)."""
+        self._authorize(actor, Permission.USER_MANAGE)
+        self._record(actor, Permission.USER_MANAGE, "allowed", detail)
+
     def record_first_account(self, username: str) -> None:
         """Trace la création du compte administrateur au PREMIER lancement
         (V6.2) — événement d'amorçage unique, hors RBAC : il n'existe encore

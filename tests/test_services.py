@@ -42,7 +42,9 @@ from tests.fakes import (
     FakeArchiveValidator,
     FakeBackup,
     FakeContainer,
+    FakeDoorman,
     FakeGame,
+    FakeIncidents,
     FakeLogs,
     FakeMetrics,
     FakeNotifier,
@@ -123,6 +125,8 @@ class ServiceTestBase(unittest.TestCase):
         self.temp_bans = FakeTempBans()
         self.restart_schedule = InMemoryRestartSchedule()
         self.restore = FakeRestore()
+        self.doorman = FakeDoorman()
+        self.incidents = FakeIncidents()
         self.pending_restore = InMemoryPendingRestore()
         self.player_stats = FakePlayerStats()
         self.service = AdminService(
@@ -145,6 +149,8 @@ class ServiceTestBase(unittest.TestCase):
             restart_schedule=self.restart_schedule,
             restore=self.restore,
             restore_safety_backup=self.backup,
+            doorman=self.doorman,
+            incidents=self.incidents,
             pending_restore=self.pending_restore,
             player_stats=self.player_stats,
             archive_checks=self.archive_checks,
@@ -867,6 +873,20 @@ class TestRestore(ServiceTestBase):
         self.assertEqual(self.restore.calls, [self.ARCHIVE])
         self.assertIsNone(self.pending_restore.get())
         self.assertIn("phase=restore_started", self.audit.entries[-1].detail)
+        # V7b : la consigne « restauration » du portier est amorcée AVANT le
+        # lancement du worker (qui prendra le poste), sans le démarrer ici.
+        self.assertEqual(len(self.doorman.primed), 1)
+        self.assertIn("Restauration", self.doorman.primed[0][0])
+        self.assertFalse(self.doorman.running)
+
+    def test_doorman_priming_failure_never_blocks_restore(self):
+        # Un portier indisponible ne doit jamais empêcher une restauration :
+        # le priming est best-effort.
+        self.doorman.prime = lambda motd, kick: (_ for _ in ()).throw(RuntimeError("KO"))
+        self.service.restore_backup(self.owner, self.ARCHIVE)
+        self.backup.running = False
+        self.assertEqual(self.service.tick_pending_restore(self.owner), "restored")
+        self.assertEqual(self.restore.calls, [self.ARCHIVE])
 
     def test_tick_aborts_when_security_backup_exits_with_error(self):
         self.service.restore_backup(self.owner, self.ARCHIVE)
@@ -1830,6 +1850,60 @@ class TestPerformanceEvents(ServiceTestBase):
             self.service.performance_events(self.guest, self._now())
         self.assertEqual(self.audit.entries[-1].outcome, "denied")
         self.assertEqual(self.audit.entries[-1].action, "STATUS")
+
+
+class TestIncidents(ServiceTestBase):
+    def _now(self):
+        return FixedClock().now()
+
+    def test_incident_correlates_actions_in_its_window(self):
+        from domain.model import Incident
+        now = self._now()
+        self.incidents._recent = [Incident(
+            id="server:1", subject="server", kind="availability", label="Serveur",
+            started_at=now - timedelta(minutes=30),
+            ended_at=now - timedelta(minutes=10),
+        )]
+        # Redémarrage PENDANT l'incident -> corrélé.
+        self.audit.record(AuditEntry(
+            timestamp=now - timedelta(minutes=20), username="jeremy", role="owner",
+            action="RESTART", target=CONTAINER_NAME, outcome="allowed", detail="",
+        ))
+        # Sauvegarde AVANT l'incident -> hors fenêtre, non corrélée.
+        self.audit.record(AuditEntry(
+            timestamp=now - timedelta(minutes=50), username="backup-watch", role="automation",
+            action="BACKUP_TRIGGER", target=CONTAINER_NAME, outcome="allowed",
+            detail="phase=backup_done archive=x.tar.gz",
+        ))
+        result = self.service.incidents(self.owner)
+        self.assertEqual(len(result), 1)
+        incident, actions = result[0]
+        self.assertEqual(incident.subject, "server")
+        self.assertEqual([kind for _, kind in actions], ["restart"])
+
+    def test_ongoing_incident_window_extends_to_now(self):
+        from domain.model import Incident
+        now = self._now()
+        self.incidents._recent = [Incident(
+            id="disk:1", subject="disk", kind="disk", label="Espace disque",
+            started_at=now - timedelta(minutes=5), ended_at=None,
+        )]
+        self.audit.record(AuditEntry(
+            timestamp=now - timedelta(minutes=2), username="jeremy", role="owner",
+            action="BACKUP_RESTORE", target=CONTAINER_NAME, outcome="allowed",
+            detail="phase=restore_started",
+        ))
+        _incident, actions = self.service.incidents(self.owner)[0]
+        self.assertEqual([kind for _, kind in actions], ["restore"])
+
+    def test_no_incident_store_returns_empty(self):
+        self.incidents._recent = []
+        self.assertEqual(self.service.incidents(self.owner), [])
+
+    def test_guest_denied_and_audited(self):
+        with self.assertRaises(PermissionDenied):
+            self.service.incidents(self.guest)
+        self.assertEqual(self.audit.entries[-1].outcome, "denied")
 
 
 class TestLogs(ServiceTestBase):

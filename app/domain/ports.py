@@ -22,6 +22,7 @@ from .model import (
     BackupResult,
     BanEntry,
     ContainerState,
+    Incident,
     MetricReading,
     PerformanceSnapshot,
     ModInfo,
@@ -293,6 +294,11 @@ class DoormanPort(Protocol):
     def engage(self, motd: str, kick: str) -> None: ...
     def release(self) -> None: ...
     def is_running(self) -> bool: ...
+    def prime(self, motd: str, kick: str) -> None:
+        """Écrit la consigne SANS prendre le poste : utilisé quand c'est un
+        AUTRE processus (le worker mc-restore) qui démarrera le portier au bon
+        moment. Écrire la consigne reste le rôle de mc-admin."""
+        ...
 
 
 class PendingMaintenancePort(Protocol):
@@ -516,6 +522,17 @@ class AuditPort(Protocol):
 
     def record(self, entry: AuditEntry) -> None: ...
     def recent(self, limit: int = 50) -> list[AuditEntry]: ...
+
+
+class IncidentLogPort(Protocol):
+    """Historique des incidents : les watchers ÉCRIVENT (open/close aux
+    transitions détectées, observation passive comme PlayerHistory), le
+    service LIT (recent, barrière STATUS). `open` est idempotent par sujet
+    (une chute déjà ouverte n'en rouvre pas une seconde)."""
+
+    def open(self, subject: str, kind: str, label: str, detail: str = "") -> None: ...
+    def close(self, subject: str, detail: str = "") -> None: ...
+    def recent(self, limit: int = 100) -> list[Incident]: ...
 
 
 class Clock(Protocol):

@@ -41,6 +41,16 @@ from domain.services.base import (
 )
 
 
+def _restore_doorman_consigne() -> tuple[str, str]:
+    """(MOTD 2 lignes, message de refus au login) affichés par le portier
+    pendant qu'une restauration remplace le monde. Pur, comme
+    `build_maintenance_messages` — le portier n'a aucune logique de
+    présentation, il sert la consigne telle quelle."""
+    motd = "§e⚙ Restauration en cours\n§fLe serveur revient dans quelques minutes."
+    kick = "Une sauvegarde est en cours de restauration. Reviens dans quelques minutes."
+    return motd, kick
+
+
 def _project_saturation(history: list[StorageSnapshot]) -> date | None:
     """Projection LINÉAIRE simple sur l'espace libre : au rythme actuel de
     remplissage, quand le volume sera-t-il plein ? Une tendance plate ou en
@@ -792,6 +802,16 @@ class BackupsMixin:
         return phase
 
     def _start_restore_after_backup(self, user: User, filename: str, requested_by: str, operation_id: str = "") -> None:
+        # V7b — amorce la consigne « restauration » du portier AVANT de lancer
+        # le worker : c'est LUI qui prendra le poste pendant l'arrêt du serveur
+        # (il a le socket Docker, pas mc-admin). Best-effort : un portier
+        # indisponible ne doit jamais bloquer une restauration (fichier absent
+        # = messages par défaut côté portier).
+        if self._doorman is not None:
+            try:
+                self._doorman.prime(*_restore_doorman_consigne())
+            except Exception:  # noqa: BLE001 — portier = confort, jamais bloquant
+                pass
         self._restore.restore(filename)
         now = self._clock.now()
         if not operation_id:

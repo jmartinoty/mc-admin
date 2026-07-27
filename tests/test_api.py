@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -102,6 +103,18 @@ class ApiTestBase(unittest.TestCase):
         os.close(us_fd)
         os.remove(self.users_store_path)  # créé à la demande par l'adapter
         self.addCleanup(lambda: os.path.exists(self.users_store_path) and os.remove(self.users_store_path))
+        se_fd, self.sessions_path = tempfile.mkstemp(suffix=".json")
+        os.close(se_fd)
+        os.remove(self.sessions_path)  # créé à la demande par le registre
+        self.addCleanup(lambda: os.path.exists(self.sessions_path) and os.remove(self.sessions_path))
+        to_fd, self.totp_path = tempfile.mkstemp(suffix=".json")
+        os.close(to_fd)
+        os.remove(self.totp_path)  # créé à la demande par le store 2FA
+        self.addCleanup(lambda: os.path.exists(self.totp_path) and os.remove(self.totp_path))
+        at_fd, self.api_tokens_path = tempfile.mkstemp(suffix=".json")
+        os.close(at_fd)
+        os.remove(self.api_tokens_path)  # créé à la demande par le store de jetons
+        self.addCleanup(lambda: os.path.exists(self.api_tokens_path) and os.remove(self.api_tokens_path))
 
         settings = Settings(
             rcon_host="minecraft",
@@ -118,6 +131,9 @@ class ApiTestBase(unittest.TestCase):
             mc_updater_container="mc-updater",
             ops_file="/nonexistent/ops.json",
             users_file=self.users_store_path,
+            sessions_file=self.sessions_path,
+            totp_file=self.totp_path,
+            api_tokens_file=self.api_tokens_path,
         )
         self.game = FakeGame(players=[Player("alice")], whitelist=["alice", "bob"])
         self.container = FakeContainer(running=True)
@@ -268,6 +284,7 @@ class ApiTestBase(unittest.TestCase):
             map_open=self.fake_map_open,
             app_update_checker=FakeBackgroundTask(),
         )
+        self.app = app
         self.client = TestClient(app, follow_redirects=False)
 
     # -- helpers --
@@ -357,6 +374,214 @@ class TestAuthFlow(ApiTestBase):
         token = self.page_csrf()
         self.assertEqual(self.client.post("/logout", data={"csrf_token": token}).status_code, 303)
         self.assertEqual(self.client.get("/").status_code, 303)  # de nouveau anonyme
+
+
+class TestSessions(ApiTestBase):
+    def _second_device(self):
+        return TestClient(self.app, follow_redirects=False)
+
+    def _csrf_from_page(self, client, path="/"):
+        return self._csrf_from(client.get(path).text)
+
+    def _login_on(self, client, username, password):
+        token = self._csrf_from(client.get("/login").text)
+        return client.post(
+            "/login",
+            data={"username": username, "password": password, "csrf_token": token},
+        )
+
+    def test_sessions_page_lists_current_device(self):
+        self.login("paul", "admin-pw")
+        page = self.client.get("/sessions")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Appareils connectés", page.text)
+        self.assertIn("cet appareil", page.text)
+
+    def test_revoking_other_device_logs_it_out(self):
+        # Deux « appareils » (deux jeux de cookies) connectés au même compte.
+        self.login("paul", "admin-pw")
+        other = self._second_device()
+        self._login_on(other, "paul", "admin-pw")
+        self.assertEqual(other.get("/").status_code, 200)  # l'autre est bien connecté
+        # Deux sessions visibles depuis le 1er appareil.
+        self.assertEqual(self.client.get("/sessions").text.count('name="sid"'), 2)
+
+        # « Déconnecter tous les autres appareils » depuis le 1er.
+        token = self._csrf_from_page(self.client, "/sessions")
+        res = self.client.post("/actions/sessions/revoke-others", data={"csrf_token": token})
+        self.assertEqual(res.status_code, 303)
+
+        # L'autre appareil est déconnecté ; le nôtre reste connecté.
+        self.assertEqual(other.get("/").status_code, 303)
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_revoking_own_current_session_logs_out(self):
+        self.login("paul", "admin-pw")
+        page = self.client.get("/sessions").text
+        import re as _re
+        sid = _re.search(r'name="sid" value="([^"]+)"', page).group(1)
+        token = self._csrf_from_page(self.client, "/sessions")
+        res = self.client.post(
+            "/actions/sessions/revoke", data={"sid": sid, "csrf_token": token}
+        )
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(res.headers["location"], "/login")
+        self.assertEqual(self.client.get("/").status_code, 303)  # déconnecté
+
+    def test_sessions_page_requires_login(self):
+        self.assertEqual(self.client.get("/sessions").status_code, 303)
+
+
+class TestTwoFactor(ApiTestBase):
+    def _current_code(self, secret):
+        from api import totp
+        return totp.code_at(secret, time.time())
+
+    def _enable_2fa_for(self, username, password):
+        """Active la 2FA de bout en bout via l'UI, puis se déconnecte.
+        Renvoie le secret base32 (pour fabriquer des codes dans les tests)."""
+        self.login(username, password)
+        token = self._csrf_from(self.client.get("/security").text)
+        self.client.post("/security/start", data={"csrf_token": token})
+        page = self.client.get("/security").text
+        secret = re.search(r'secret=([A-Z2-7]+)', page).group(1)
+        token = self._csrf_from(page)
+        res = self.client.post(
+            "/security/enable",
+            data={"code": self._current_code(secret), "csrf_token": token},
+        )
+        self.assertEqual(res.status_code, 303)
+        self.assertIn("Activée", self.client.get("/security").text)
+        self.client.post("/logout", data={"csrf_token": self.page_csrf()})
+        return secret
+
+    def test_enable_then_login_requires_code(self):
+        secret = self._enable_2fa_for("jeremy", "owner-pw")
+
+        # Le seul mot de passe ne connecte plus : on reçoit l'étape « code ».
+        res = self.login("jeremy", "owner-pw")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("code", res.text.lower())
+        self.assertEqual(self.client.get("/").status_code, 303)  # pas encore connecté
+
+        # Un mauvais code est refusé.
+        bad = self.client.post(
+            "/login/verify",
+            data={"code": "000000", "csrf_token": self._csrf_from(res.text)},
+        )
+        self.assertEqual(bad.status_code, 401)
+
+        # Le bon code termine la connexion.
+        ok = self.client.post(
+            "/login/verify",
+            data={"code": self._current_code(secret), "csrf_token": self._csrf_from(bad.text)},
+        )
+        self.assertEqual(ok.status_code, 303)
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_login_without_2fa_unchanged(self):
+        # Un compte sans 2FA se connecte directement (pas de régression).
+        self.assertEqual(self.login("paul", "admin-pw").status_code, 303)
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_disable_requires_password(self):
+        secret = self._enable_2fa_for("jeremy", "owner-pw")
+        store = self.app.state.totp
+        # Se reconnecter en passant la 2FA.
+        res = self.login("jeremy", "owner-pw")
+        self.client.post(
+            "/login/verify",
+            data={"code": self._current_code(secret), "csrf_token": self._csrf_from(res.text)},
+        )
+
+        # Mauvais mot de passe -> 2FA reste active.
+        token = self._csrf_from(self.client.get("/security").text)
+        self.client.post("/security/disable",
+                         data={"current_password": "wrong", "csrf_token": token})
+        self.assertTrue(store.is_enabled("jeremy"))
+
+        # Bon mot de passe -> désactivée.
+        token = self._csrf_from(self.client.get("/security").text)
+        self.client.post("/security/disable",
+                         data={"current_password": "owner-pw", "csrf_token": token})
+        self.assertFalse(store.is_enabled("jeremy"))
+
+
+class TestIncidentsPage(ApiTestBase):
+    def test_incidents_page_renders_for_status_user(self):
+        self.login("sam", "friend-pw")  # friend a STATUS
+        res = self.client.get("/incidents")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("Incidents", res.text)
+
+    def test_incidents_page_requires_login(self):
+        self.assertEqual(self.client.get("/incidents").status_code, 303)
+
+
+class TestLocalApi(ApiTestBase):
+    def _create_token(self, label="dashboard", role="friend"):
+        """Crée un jeton via l'UI owner et renvoie son secret (affiché 1 fois)."""
+        self.login("jeremy", "owner-pw")
+        token = self._csrf_from(self.client.get("/api-tokens").text)
+        self.client.post(
+            "/actions/api-tokens/create",
+            data={"label": label, "role": role, "csrf_token": token},
+        )
+        page = self.client.get("/api-tokens").text
+        secret = re.search(r'word-break:break-all">([^<]+)</p>', page).group(1).strip()
+        self.client.post("/logout", data={"csrf_token": self.page_csrf()})
+        return secret
+
+    def test_ping_is_open(self):
+        res = self.client.get("/api/v1/ping")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["ok"], True)
+
+    def test_status_requires_token(self):
+        self.assertEqual(self.client.get("/api/v1/status").status_code, 401)
+        self.assertEqual(
+            self.client.get("/api/v1/status",
+                            headers={"Authorization": "Bearer pas-bon"}).status_code,
+            401,
+        )
+
+    def test_valid_token_reads_status(self):
+        secret = self._create_token(role="friend")
+        res = self.client.get(
+            "/api/v1/status", headers={"Authorization": f"Bearer {secret}"}
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertIn("online", body)
+        self.assertIn("container", body)
+        self.assertEqual(body["container"]["name"], "minecraft")
+
+    def test_token_reads_players_and_metrics(self):
+        secret = self._create_token(role="friend")
+        headers = {"Authorization": f"Bearer {secret}"}
+        self.assertEqual(self.client.get("/api/v1/players", headers=headers).status_code, 200)
+        self.assertEqual(self.client.get("/api/v1/metrics", headers=headers).status_code, 200)
+
+    def test_revoked_token_is_rejected(self):
+        secret = self._create_token(role="friend")
+        headers = {"Authorization": f"Bearer {secret}"}
+        self.assertEqual(self.client.get("/api/v1/status", headers=headers).status_code, 200)
+        # Révocation via l'UI.
+        self.login("jeremy", "owner-pw")
+        token_id = self.app.state.api_tokens.list()[0].token_id
+        token = self._csrf_from(self.client.get("/api-tokens").text)
+        self.client.post("/actions/api-tokens/revoke",
+                         data={"token_id": token_id, "csrf_token": token})
+        self.assertEqual(self.client.get("/api/v1/status", headers=headers).status_code, 401)
+
+    def test_token_management_is_owner_only(self):
+        self.login("paul", "admin-pw")  # admin, pas USER_MANAGE
+        self.assertEqual(self.client.get("/api-tokens").status_code, 403)
+
+    def test_openapi_schema_is_served(self):
+        schema = self.client.get("/api/v1/openapi.json")
+        self.assertEqual(schema.status_code, 200)
+        self.assertIn("/status", schema.json()["paths"])
 
 
 class TestActionsRbac(ApiTestBase):
@@ -2274,6 +2499,9 @@ class TestFirstRunSetup(unittest.TestCase):
             cookie_secure=False, prometheus_url="http://prom:9090",
             metrics_config="/nonexistent/metrics.yml",
             mc_updater_container="mc-updater", ops_file="/nonexistent/ops.json",
+            sessions_file=os.path.join(self.dir, "sessions.json"),
+            totp_file=os.path.join(self.dir, "totp.json"),
+            api_tokens_file=os.path.join(self.dir, "api_tokens.json"),
         )
         from domain.services import AdminService
         from adapters.restart_schedule import InMemoryRestartSchedule

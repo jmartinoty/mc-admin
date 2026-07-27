@@ -227,6 +227,11 @@ services:
     command: []
     environment:
       MC_CONTAINER_NAME: "${MC_CONTAINER:-minecraft}"
+      # Le portier (facultatif, voir mc-doorman plus bas) tient l'adresse du
+      # serveur pendant la restauration : les joueurs lisent « restauration en
+      # cours » au lieu d'un « connexion refusée ». Laisser vide si vous n'avez
+      # pas créé mc-doorman — la restauration reste alors muette, sans erreur.
+      MC_DOORMAN_CONTAINER: "${MC_DOORMAN_CONTAINER:-mc-doorman}"
       RESTORE_TARGET_FILE: "/restore/restore-target"
       BACKUPS_ROOT: "/backups"
       MC_DATA_ROOT: "/worlddata"

@@ -1030,6 +1030,27 @@ class FakeWorkerIntegrity:
         return list(self._checks)
 
 
+class FakeIncidents:
+    """IncidentLogPort en mémoire : trace open/close et sert `recent()`."""
+
+    def __init__(self, preset=None):
+        self.opens = []       # (subject, kind, label, detail)
+        self.closes = []      # subject
+        self._open = {}       # subject -> Incident en cours
+        self._recent = list(preset or [])
+
+    def open(self, subject, kind, label, detail=""):
+        self.opens.append((subject, kind, label, detail))
+        self._open[subject] = subject
+
+    def close(self, subject, detail=""):
+        self.closes.append(subject)
+        self._open.pop(subject, None)
+
+    def recent(self, limit=100):
+        return list(self._recent)[:limit]
+
+
 class FakeDoorman:
     """DoormanPort en mémoire. `running` est l'état RÉEL observé (le service
     ne déduit jamais la maintenance d'autre chose que de cette lecture)."""
@@ -1040,6 +1061,7 @@ class FakeDoorman:
         self.fail_release = fail_release
         self.status_fail = False       # is_running() lève (proxy injoignable)
         self.consignes = []            # (motd, kick) de chaque prise de poste
+        self.primed = []               # (motd, kick) amorcés sans prise de poste (V7b)
         self.releases = 0
 
     def engage(self, motd: str, kick: str) -> None:
@@ -1058,3 +1080,8 @@ class FakeDoorman:
         if self.status_fail:
             raise MaintenanceUnavailable("état du portier illisible")
         return self.running
+
+    def prime(self, motd: str, kick: str) -> None:
+        # Amorce la consigne sans démarrer le portier (V7b) : le worker
+        # mc-restore prendra le poste lui-même pendant l'arrêt du serveur.
+        self.primed.append((motd, kick))

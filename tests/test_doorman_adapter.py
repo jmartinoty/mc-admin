@@ -119,6 +119,19 @@ class TestDockerDoorman(unittest.TestCase):
         )
         self.assertFalse(adapter.is_running())
 
+    def test_prime_ecrit_la_consigne_sans_demarrer_le_portier(self):
+        # V7b : mc-admin pose la consigne « restauration », c'est le worker
+        # mc-restore qui prendra le poste plus tard — donc AUCUN start ici.
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "doorman.json"
+            container = FakeDoormanContainer()
+            _adapter(container, config).prime("Restauration en cours", "Reviens bientôt")
+            payload = json.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload, {"motd": "Restauration en cours", "kick": "Reviens bientôt"}
+            )
+            self.assertFalse(container.started)
+
 
 class TestNotConfiguredDoorman(unittest.TestCase):
     def test_engage_refuse_explicitement(self):
@@ -129,6 +142,9 @@ class TestNotConfiguredDoorman(unittest.TestCase):
         doorman = NotConfiguredDoorman()
         doorman.release()  # ne lève pas : rien à relever
         self.assertFalse(doorman.is_running())
+
+    def test_prime_est_inerte(self):
+        NotConfiguredDoorman().prime("m", "k")  # ne lève pas : rien à amorcer
 
 
 if __name__ == "__main__":
