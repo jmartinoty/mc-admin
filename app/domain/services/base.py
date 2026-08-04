@@ -19,6 +19,7 @@ from datetime import datetime
 
 from domain.errors import (
     BackupUnavailable,
+    MaintenanceUnavailable,
     PermissionDenied,
 )
 from domain.model import (
@@ -58,6 +59,7 @@ from domain.ports import (
     PlayerHistoryPort,
     PlayerStatsPort,
     RecurringRestartPort,
+    ScheduledMaintenancePort,
     RestartSchedulerPort,
     RestorePort,
     AlertThresholdsPort,
@@ -82,6 +84,13 @@ def _format_seconds(seconds: int) -> str:
 
 # Identité système des ISSUES de sauvegardes : l'issue est constatée par
 # l'observation de fond (pas une action utilisateur), l'audit doit le montrer.
+_UPDATE_WATCH_USER = User(
+    username="update-watch",
+    role=Role(name="automation",
+              permissions=frozenset({Permission.UPDATE}),
+              grants_all=False),
+)
+
 _BACKUP_WATCH_USER = User(
     username="backup-watch",
     # BACKUP_RETENTION en plus du TRIGGER : l'issue d'une sauvegarde applique
@@ -154,6 +163,7 @@ class ServiceCore:
         doorman: DoormanPort | None = None,
         pending_maintenance: PendingMaintenancePort | None = None,
         recurring_restart: RecurringRestartPort | None = None,
+        scheduled_maintenance: ScheduledMaintenancePort | None = None,
         pending_restore: PendingRestorePort | None = None,
         player_stats: PlayerStatsPort | None = None,
         archive_checks: ArchiveChecksPort | None = None,
@@ -212,6 +222,7 @@ class ServiceCore:
         self._mod_checks = mod_checks
         self._spark = spark
         self._recurring_restart = recurring_restart
+        self._scheduled_maintenance = scheduled_maintenance
         self._backup_archives = backup_archives
         self._bans = bans
         self._temp_bans = temp_bans
@@ -220,6 +231,15 @@ class ServiceCore:
         self._op_levels_apply = op_levels_apply
         self._op_levels_operation: tuple[User, Permission, str, str] | None = None
         self._op_levels_lock = threading.Lock()
+        # Ops programmées mises « en attente » car des joueurs sont connectés
+        # (garde-fou « ne pas exécuter tant que joueurs connectés ») : on
+        # mémorise les operation_id déjà annoncés pour ne prévenir qu'UNE fois
+        # par report, pas à chaque tick. Transitoire (même portée que l'op).
+        self._deferred_ops_announced: set[str] = set()
+        # Mise à jour du serveur EN COURS (one-shot mc-updater lancé) : sert à
+        # constater son ISSUE une fois le conteneur terminé — sans ça on ne
+        # saurait dire que « lancée ». (operation_id, version d'avant).
+        self._update_operation: tuple[str, str | None] | None = None
         self._logs = logs
         self._audit = audit
         self._clock = clock
@@ -258,6 +278,29 @@ class ServiceCore:
         if not user.can(permission):
             self._record(user, permission, "denied")
             raise PermissionDenied(user.username, permission.value)
+
+    def _refuse_if_maintenance(self, user: User, permission: Permission, hint: str) -> None:
+        """Refuse une action qui DÉMARRERAIT le serveur pendant une maintenance.
+
+        Le portier occupe l'adresse statique du serveur : Docker refuserait le
+        démarrage (« Address already in use ») et l'échec remontait jusqu'à une
+        erreur 500 (constaté par Jeremy le 31/07 en cliquant « Démarrer »
+        pendant une maintenance). On refuse AVANT d'agir, avec le geste correct
+        à faire. Un état de portier illisible ne bloque pas : l'action
+        échouerait alors proprement d'elle-même.
+        """
+        doorman = getattr(self, "_doorman", None)
+        if doorman is None:
+            return
+        try:
+            if not doorman.is_running():
+                return
+        except Exception:  # noqa: BLE001 — état inconnu : ne pas bloquer à tort
+            return
+        self._record(user, permission, "denied", "bloqué : serveur en maintenance")
+        raise MaintenanceUnavailable(
+            f"Le serveur est en maintenance : {hint} (le portier occupe son adresse réseau)."
+        )
 
     def _restore_event(self, user: User, phase: str, outcome: str = "allowed", **fields) -> None:
         parts = [f"phase={phase}"]

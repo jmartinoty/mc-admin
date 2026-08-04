@@ -4,6 +4,42 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.16.0 — 2026-08-04
+
+### Maintenance et redémarrages
+- **Nouvelle option « Ne pas exécuter tant que des joueurs sont connectés »**
+  sur les redémarrages (ponctuel et quotidien) et sur les fermetures pour
+  maintenance : à l'heure dite, l'opération **attend que le serveur soit
+  vide** au lieu de déconnecter tout le monde. Elle se déclenche dès le
+  départ du dernier joueur, et prévient une fois qu'elle patiente. Si le
+  serveur ne répond pas, elle attend aussi — jamais de coupure à l'aveugle.
+- **Maintenances programmées** : on peut désormais en enregistrer plusieurs,
+  soit à une **date précise**, soit sur des **jours de la semaine** choisis,
+  avec l'heure, le préavis et le message affiché aux joueurs. La liste se
+  gère depuis le bouton Maintenance.
+- Le message affiché aux joueurs ne se répète plus : « Maintenance en cours »
+  n'est plus suivi d'une phrase qui redit la même chose. La seconde ligne ne
+  porte que ce qui informe vraiment (votre message, l'heure de retour).
+
+### Mises à jour du serveur
+- **Vous êtes prévenu quand la mise à jour est TERMINÉE** — « Serveur mis à
+  jour, 26.1 → 26.2 » — et surtout **quand elle échoue**. Jusqu'ici seul le
+  lancement était annoncé : une mise à jour ratée pendant la nuit passait
+  totalement inaperçue.
+- Lancer une mise à jour pendant une maintenance est désormais refusé avec une
+  explication : les deux se disputent l'adresse réseau du serveur, la mise à
+  jour aurait échoué en laissant le serveur fermé.
+
+### Tableau de bord et sauvegardes
+- La **version du jeu se réaffiche toute seule** après un redémarrage : plus
+  besoin de recharger la page pour la voir revenir.
+- Plus aucune page d'erreur technique sur « Démarrer », « Arrêter » ou
+  « Redémarrer » : les refus de Docker sont expliqués en clair. En
+  particulier, démarrer le serveur pendant une maintenance indique
+  maintenant d'utiliser « Rouvrir le serveur ».
+- **Liste des sauvegardes plus lisible** : l'heure est passée à gauche, contre
+  les points de la frise, et le nom de l'archive ne répète plus la date.
+
 ## v0.15.0 — 2026-07-27
 
 ### Carte BlueMap

@@ -36,6 +36,17 @@ def _humanize_uptime(started_at) -> str | None:
 
 
 
+def _minutes_until(hhmm: str) -> float:
+    """Minutes d'ici la prochaine occurrence de HH:MM (heure locale ; demain si
+    l'heure est déjà passée). Lève ValueError si le format est invalide."""
+    hour, minute = (int(part) for part in hhmm.split(":"))
+    local_now = datetime.now().astimezone()
+    target = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= local_now:
+        target += timedelta(days=1)
+    return (target - local_now).total_seconds() / 60.0
+
+
 def _game_state(status) -> str | None:
     """Pastille honnête (retour Jeremy 18/07) : un conteneur allumé ne veut
     pas dire un jeu joignable. < 5 min d'uptime = démarrage en cours ;
@@ -122,6 +133,11 @@ def index(request: Request):
     ctx["recurring_restart"] = (
         request.app.state.service.recurring_restart_status(user) if user.can(Permission.RESTART) else None
     )
+    ctx["scheduled_maintenance"] = (
+        request.app.state.service.list_scheduled_maintenance(user)
+        if user.can(Permission.MAINTENANCE) else []
+    )
+    ctx["weekday_labels"] = ("Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim")
     ctx["show_infra"] = user.can(Permission.SERVER_MANAGE)
     ctx["show_runtime_health"] = ctx["show_infra"]
     ctx["dashboard_mode"] = (
@@ -287,6 +303,7 @@ def action_schedule_restart(
     request: Request,
     minutes: str = Form(""),
     seconds: str = Form(""),
+    defer_if_players: str = Form(""),
     csrf_token: str = Form(...),
 ):
     """Délai en secondes (dialogue, défaut 30 s -> décompte in-game) ou en
@@ -301,7 +318,9 @@ def action_schedule_restart(
             request.app.state.service.restart(user)
             request.session["flash"] = "Redémarrage demandé."
         else:
-            request.app.state.service.schedule_restart(user, minutes_value)
+            request.app.state.service.schedule_restart(
+                user, minutes_value, defer_if_players=bool(defer_if_players)
+            )
             delay_txt = (
                 f"{minutes_value:g} minute(s)" if minutes_value >= 1
                 else f"{int(minutes_value * 60)} seconde(s)"
@@ -319,6 +338,7 @@ def action_recurring_restart(
     request: Request,
     time_hhmm: str = Form(""),
     lead_seconds: str = Form("300"),
+    defer_if_players: str = Form(""),
     disable: str = Form(""),
     csrf_token: str = Form(...),
 ):
@@ -331,7 +351,10 @@ def action_recurring_restart(
             request.app.state.service.clear_recurring_restart(user)
             request.session["flash"] = "Redémarrage quotidien désactivé."
         else:
-            request.app.state.service.set_recurring_restart(user, time_hhmm.strip(), int(lead_seconds))
+            request.app.state.service.set_recurring_restart(
+                user, time_hhmm.strip(), int(lead_seconds),
+                defer_if_players=bool(defer_if_players),
+            )
             request.session["flash"] = f"Redémarrage quotidien activé : tous les jours à {time_hhmm.strip()}."
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -394,18 +417,25 @@ def action_enter_maintenance(
     message: str = Form(""),
     until: str = Form(""),
     grace_minutes: str = Form(""),
+    at_time: str = Form(""),
+    defer_if_players: str = Form(""),
     csrf_token: str = Form(...),
 ):
-    """Ferme le serveur derrière le portier. Délai vide ou <= 0 = tout de
-    suite ; sinon les joueurs sont prévenus puis le compte à rebours ferme."""
+    """Ferme le serveur derrière le portier. Trois modes de délai : vide/<=0 =
+    tout de suite ; `grace_minutes` = dans X minutes ; `at_time` (HH:MM) = à
+    heure fixe (aujourd'hui, ou demain si l'heure est passée)."""
     user = _current(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
     _require_csrf(request, csrf_token)
     try:
-        grace = float(grace_minutes) if grace_minutes.strip() else 0.0
+        if at_time.strip():
+            grace = _minutes_until(at_time.strip())
+        else:
+            grace = float(grace_minutes) if grace_minutes.strip() else 0.0
         request.app.state.service.enter_maintenance(
-            user, message=message, until=until, grace_minutes=grace
+            user, message=message, until=until, grace_minutes=grace,
+            defer_if_players=bool(defer_if_players),
         )
         request.session["flash"] = (
             f"Fermeture pour maintenance dans {grace:g} minute(s)." if grace > 0
@@ -415,6 +445,62 @@ def action_enter_maintenance(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except (DomainError, ValueError) as exc:
         flash_error(request, "La mise en maintenance a échoué", code="SRV-06", details=str(exc))
+    return RedirectResponse("/", status_code=303)
+
+
+@router.post("/actions/scheduled-maintenance/add")
+def action_scheduled_maintenance_add(
+    request: Request,
+    kind: str = Form("once"),
+    time_hhmm: str = Form(""),
+    date: str = Form(""),
+    weekdays: list[str] = Form(default=[]),
+    lead_seconds: str = Form("300"),
+    message: str = Form(""),
+    until: str = Form(""),
+    defer_if_players: str = Form(""),
+    csrf_token: str = Form(...),
+):
+    """Ajoute une maintenance programmée : date précise (kind=once) OU jours de
+    semaine cochés (kind=weekly)."""
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        days = tuple(int(w) for w in weekdays if w.strip().lstrip("-").isdigit())
+        request.app.state.service.add_scheduled_maintenance(
+            user, kind=kind.strip(), time_hhmm=time_hhmm.strip(),
+            date=date.strip(), weekdays=days, lead_seconds=int(lead_seconds),
+            message=message, until=until, defer_if_players=bool(defer_if_players),
+        )
+        request.session["flash"] = "Maintenance programmée ajoutée."
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (DomainError, ValueError) as exc:
+        flash_error(request, "La maintenance programmée n'a pas pu être ajoutée",
+                    code="SRV-07", details=str(exc))
+    return RedirectResponse("/", status_code=303)
+
+
+@router.post("/actions/scheduled-maintenance/remove")
+def action_scheduled_maintenance_remove(
+    request: Request,
+    entry_id: str = Form(...),
+    csrf_token: str = Form(...),
+):
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        request.app.state.service.remove_scheduled_maintenance(user, entry_id.strip())
+        request.session["flash"] = "Maintenance programmée retirée."
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except DomainError as exc:
+        flash_error(request, "La maintenance programmée n'a pas pu être retirée",
+                    code="SRV-07", details=str(exc))
     return RedirectResponse("/", status_code=303)
 
 
@@ -723,6 +809,16 @@ def vitals_fragment(request: Request):
             infra = infra if len(infra) > 1 else None
         except DomainError:
             pass
+    # Version du jeu : elle DISPARAÎT pendant un redémarrage (mc-monitor n'a
+    # plus de mesure) et ne revenait qu'au rechargement manuel de la page
+    # (constaté par Jeremy le 31/07). Le check est mis en cache 60 s côté
+    # adapter : le poller ne martèle donc ni Prometheus ni Mojang.
+    update = None
+    if user.can(Permission.UPDATE):
+        try:
+            update = svc.update_status(user)
+        except DomainError:
+            update = None
     return templates.TemplateResponse(
         request, "partials/vitals.html",
         {
@@ -731,6 +827,8 @@ def vitals_fragment(request: Request):
             "uptime": uptime,
             "infra": infra,
             "show_runtime_health": show_infra,
+            "update": update,
+            "can_update": user.can(Permission.UPDATE),
         },
     )
 

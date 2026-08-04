@@ -35,6 +35,9 @@ class JsonRecurringRestart:
         return RecurringRestart(
             time_hhmm=time_hhmm,
             lead_seconds=lead if isinstance(lead, int) and lead > 0 else 300,
+            # Absent d'une config écrite avant cette option -> False (migration
+            # douce, aucun redémarrage historique n'est modifié).
+            defer_if_players=bool(data.get("defer_if_players", False)),
         )
 
     def set_config(self, config: RecurringRestart) -> None:
@@ -42,6 +45,7 @@ class JsonRecurringRestart:
             data = self._read(strict=True)
             data["time"] = config.time_hhmm
             data["lead_seconds"] = config.lead_seconds
+            data["defer_if_players"] = config.defer_if_players
             data.pop("last_fired", None)  # nouvelle config -> repart de zéro
             self._write(data)
 

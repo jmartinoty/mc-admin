@@ -35,6 +35,7 @@ class InMemoryPendingMaintenance:
         motd: str,
         kick: str,
         total_seconds: float,
+        defer_if_players: bool = False,
     ) -> None:
         with self._lock:
             self._state = PendingMaintenance(
@@ -43,6 +44,7 @@ class InMemoryPendingMaintenance:
                 motd=motd,
                 kick=kick,
                 operation_id=f"maintenance::{engage_at.isoformat()}",
+                defer_if_players=defer_if_players,
             )
             self._announced = {t for t in self._thresholds if t > total_seconds}
 

@@ -215,15 +215,15 @@
         {% set a = item.archive %}
         <li class="archive-entry archive-entry-{{ item.kind }}">
           <span class="archive-timeline-dot" aria-hidden="true"></span>
+          <time class="archive-entry-time tnum muted" datetime="{{ a.created_at.isoformat() }}">
+            {{ a.created_at.astimezone().strftime("%H:%M") }}
+          </time>
           <div class="archive-entry-body">
             <div class="archive-entry-head">
               <div>
                 <div class="archive-title">{{ item.title }}</div>
                 <div class="muted archive-path">{{ a.filename }}</div>
               </div>
-              <time class="tnum muted" datetime="{{ a.created_at.isoformat() }}">
-                {{ a.created_at.astimezone().strftime("%H:%M") }}
-              </time>
             </div>
             <div class="archive-entry-meta">
             {% if item.kind == "safety" %}

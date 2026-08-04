@@ -17,8 +17,8 @@ from datetime import datetime, timedelta, timezone
 
 from adapters.maintenance_state import InMemoryPendingMaintenance
 from adapters.restart_schedule import InMemoryRestartSchedule
-from domain.errors import MaintenanceUnavailable, PermissionDenied
-from domain.model import Permission, Role, User
+from domain.errors import InvalidDuration, MaintenanceUnavailable, PermissionDenied
+from domain.model import Permission, Player, Role, ScheduledMaintenance, User
 from domain.services import AdminService
 from domain.services.maintenance import (
     MAINTENANCE_STOP_TIMEOUT_SECONDS,
@@ -37,6 +37,7 @@ from tests.fakes import (
     FakeNotifier,
     FakeOps,
     FakePlayerHistory,
+    FakeScheduledMaintenance,
     FakeTempBans,
     FakeUpdater,
     MutableClock,
@@ -52,7 +53,8 @@ VIEWER = User(
 )
 
 
-def _service(*, doorman=None, container=None, game=None, audit=None, clock=None, pending=None):
+def _service(*, doorman=None, container=None, game=None, audit=None, clock=None,
+             pending=None, scheduled_maintenance=None, notifier=None):
     return AdminService(
         game=game or FakeGame(),
         container=container or FakeContainer(),
@@ -65,12 +67,13 @@ def _service(*, doorman=None, container=None, game=None, audit=None, clock=None,
         backup_archives=FakeBackupArchives(),
         updater=FakeUpdater(),
         ops=FakeOps(),
-        notifications=FakeNotifier(),
+        notifications=notifier if notifier is not None else FakeNotifier(),
         bans=FakeBans(),
         temp_bans=FakeTempBans(),
         restart_schedule=InMemoryRestartSchedule(),
         doorman=doorman if doorman is not None else FakeDoorman(),
         pending_maintenance=pending if pending is not None else InMemoryPendingMaintenance(),
+        scheduled_maintenance=scheduled_maintenance,
     )
 
 
@@ -92,6 +95,24 @@ class TestMessages(unittest.TestCase):
         motd, kick = build_maintenance_messages("", "")
         self.assertIn("maintenance", motd.lower())
         self.assertTrue(kick.strip())
+
+    def test_motd_ne_repete_pas_le_titre_quand_rien_a_ajouter(self):
+        # Retour Jeremy 31/07 : « Maintenance en cours » puis « Le serveur est
+        # fermé pour maintenance » disait deux fois la même chose. Sans message
+        # ni retour prévu, le MOTD tient sur la SEULE ligne de titre.
+        motd, kick = build_maintenance_messages("", "")
+        self.assertEqual(len(motd.split("\n")), 1)
+        # Le refus au login, lui, garde une phrase complète (pas de titre
+        # sous les yeux du joueur).
+        self.assertIn("maintenance", kick.lower())
+
+    def test_motd_sans_message_affiche_seulement_le_retour_prevu(self):
+        motd, kick = build_maintenance_messages("", "14h30")
+        lines = motd.split("\n")
+        self.assertEqual(len(lines), 2)
+        self.assertIn("14h30", lines[1])
+        self.assertNotIn("fermé pour maintenance", lines[1])
+        self.assertIn("14h30", kick)
 
     def test_texte_multiligne_est_aplati(self):
         # Défense en profondeur : le MOTD a une structure de lignes, un texte
@@ -346,6 +367,197 @@ class TestMaintenanceUser(unittest.TestCase):
         scheduler._wait = fake_wait
         scheduler._run()  # ne doit pas lever
         self.assertGreaterEqual(calls["n"], 3)
+
+
+class TestMaintenanceGuardrailAndRecurring(unittest.TestCase):
+    """Garde-fou joueurs + maintenance récurrente quotidienne (palier b)."""
+
+    def _hhmm_in(self, clock, minutes):
+        return (clock.now().astimezone() + timedelta(minutes=minutes)).strftime("%H:%M")
+
+    def _today(self, clock):
+        return clock.now().astimezone().date().isoformat()
+
+    # ---- garde-fou « ne pas exécuter tant que joueurs connectés » ----
+
+    def test_defer_holds_close_until_server_empty(self):
+        clock = MutableClock(T0)
+        game = FakeGame(players=[Player("alice")])
+        doorman = FakeDoorman(running=False)
+        svc = _service(game=game, doorman=doorman, clock=clock)
+        svc.enter_maintenance(OWNER, grace_minutes=5, defer_if_players=True)
+        clock.moment += timedelta(minutes=5)  # échéance atteinte
+        svc.tick_maintenance(MAINTENANCE_USER)
+        # personne n'est déconnecté : aucune prise de poste, pending intact.
+        self.assertEqual(doorman.consignes, [])
+        self.assertIsNotNone(svc._pending_maintenance.status())
+        # serveur vidé -> la fermeture s'engage enfin.
+        game._players = []
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertEqual(len(doorman.consignes), 1)
+        self.assertIsNone(svc._pending_maintenance.status())
+
+    def test_defer_when_rcon_unavailable_holds_close(self):
+        clock = MutableClock(T0)
+        game = FakeGame(available=False)  # vide NON confirmable
+        svc = _service(game=game, doorman=FakeDoorman(running=False), clock=clock)
+        svc.enter_maintenance(OWNER, grace_minutes=5, defer_if_players=True)
+        clock.moment += timedelta(minutes=5)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertIsNotNone(svc._pending_maintenance.status())
+
+    def test_defer_off_closes_even_with_players(self):
+        clock = MutableClock(T0)
+        game = FakeGame(players=[Player("alice")])
+        doorman = FakeDoorman(running=False)
+        svc = _service(game=game, doorman=doorman, clock=clock)
+        svc.enter_maintenance(OWNER, grace_minutes=5)  # sans flag
+        clock.moment += timedelta(minutes=5)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertEqual(len(doorman.consignes), 1)  # fermé malgré alice
+
+    # ---- maintenances programmées (liste : once + weekly) ----
+
+    def _weekly_today(self, clock, minutes, **kw):
+        wd = clock.now().astimezone().weekday()
+        return ScheduledMaintenance(
+            id="e1", kind="weekly", time_hhmm=self._hhmm_in(clock, minutes),
+            weekdays=(wd,), **kw,
+        )
+
+    def test_scheduled_weekly_arms_in_lead_window_with_flag(self):
+        clock = MutableClock(T0)
+        store = FakeScheduledMaintenance(entries=[
+            self._weekly_today(clock, 3, lead_seconds=300, message="Migration",
+                               defer_if_players=True),
+        ])
+        svc = _service(clock=clock, doorman=FakeDoorman(running=False),
+                       scheduled_maintenance=store)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        pending = svc._pending_maintenance.status()
+        self.assertIsNotNone(pending)
+        self.assertTrue(pending.defer_if_players)
+        self.assertEqual(store.last_fired("e1"), self._today(clock))
+
+    def test_scheduled_once_arms_on_its_date(self):
+        clock = MutableClock(T0)
+        store = FakeScheduledMaintenance(entries=[
+            ScheduledMaintenance(id="e1", kind="once", date=self._today(clock),
+                                 time_hhmm=self._hhmm_in(clock, 3), lead_seconds=300),
+        ])
+        svc = _service(clock=clock, doorman=FakeDoorman(running=False),
+                       scheduled_maintenance=store)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertIsNotNone(svc._pending_maintenance.status())
+
+    def test_scheduled_not_armed_before_lead_window(self):
+        clock = MutableClock(T0)
+        store = FakeScheduledMaintenance(entries=[self._weekly_today(clock, 30, lead_seconds=300)])
+        svc = _service(clock=clock, doorman=FakeDoorman(running=False),
+                       scheduled_maintenance=store)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertIsNone(svc._pending_maintenance.status())
+
+    def test_scheduled_weekly_ignored_on_other_weekday(self):
+        clock = MutableClock(T0)
+        other = (clock.now().astimezone().weekday() + 1) % 7
+        store = FakeScheduledMaintenance(entries=[
+            ScheduledMaintenance(id="e1", kind="weekly", weekdays=(other,),
+                                 time_hhmm=self._hhmm_in(clock, 3), lead_seconds=300),
+        ])
+        svc = _service(clock=clock, doorman=FakeDoorman(running=False),
+                       scheduled_maintenance=store)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertIsNone(svc._pending_maintenance.status())
+
+    def test_scheduled_once_past_date_is_removed(self):
+        clock = MutableClock(T0)
+        store = FakeScheduledMaintenance(entries=[
+            ScheduledMaintenance(id="e1", kind="once", date="2020-01-01",
+                                 time_hhmm="04:00", lead_seconds=300),
+        ])
+        svc = _service(clock=clock, doorman=FakeDoorman(running=False),
+                       scheduled_maintenance=store)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertEqual(store.list(), [])  # date passée : nettoyée
+
+    def test_scheduled_skips_when_already_in_maintenance(self):
+        clock = MutableClock(T0)
+        store = FakeScheduledMaintenance(entries=[self._weekly_today(clock, 3, lead_seconds=300)])
+        svc = _service(clock=clock, doorman=FakeDoorman(running=True),
+                       scheduled_maintenance=store)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertIsNone(svc._pending_maintenance.status())
+
+    def test_add_scheduled_validates_and_persists(self):
+        clock = MutableClock(T0)
+        store = FakeScheduledMaintenance()
+        svc = _service(clock=clock, scheduled_maintenance=store)
+        future = (clock.now().astimezone().date() + timedelta(days=3)).isoformat()
+        eid = svc.add_scheduled_maintenance(OWNER, kind="once", date=future, time_hhmm="03:00")
+        self.assertTrue(eid)
+        self.assertEqual(len(store.list()), 1)
+        for bad in (
+            dict(kind="once", date=future, time_hhmm="26:00"),   # heure invalide
+            dict(kind="once", date="2020-01-01", time_hhmm="03:00"),  # date passée
+            dict(kind="weekly", time_hhmm="03:00", weekdays=()),  # aucun jour
+        ):
+            with self.assertRaises(InvalidDuration):
+                svc.add_scheduled_maintenance(OWNER, **bad)
+
+    def test_remove_scheduled(self):
+        store = FakeScheduledMaintenance(entries=[
+            ScheduledMaintenance(id="e1", kind="weekly", weekdays=(0,), time_hhmm="04:00"),
+        ])
+        svc = _service(scheduled_maintenance=store)
+        svc.remove_scheduled_maintenance(OWNER, "e1")
+        self.assertEqual(store.list(), [])
+
+    def test_update_refused_while_maintenance_active(self):
+        # Le portier occupe l'IP statique du serveur : le `up -d` de mc-updater
+        # réclamerait la même et échouerait, serveur laissé fermé. Refus AVANT
+        # d'agir — et `force` ne contourne pas (contrainte technique).
+        from domain.errors import UpdateUnavailable
+        audit = RecordingAudit()
+        svc = _service(doorman=FakeDoorman(running=True), audit=audit)
+        for force in (False, True):
+            with self.subTest(force=force):
+                with self.assertRaises(UpdateUnavailable):
+                    svc.apply_update(OWNER, force=force)
+        self.assertEqual(svc._updater.applied, 0)          # rien n'a été lancé
+        self.assertEqual(audit.entries[-1].outcome, "denied")
+        self.assertIn("maintenance", audit.entries[-1].detail)
+
+    def test_start_and_restart_refused_while_maintenance_active(self):
+        # Incident du 31/07 : « Démarrer » pendant une maintenance -> Docker
+        # refuse l'adresse tenue par le portier -> erreur 500 illisible.
+        # Désormais : refus net, audité, avec le geste correct à faire.
+        audit = RecordingAudit()
+        container = FakeContainer(running=False)
+        svc = _service(doorman=FakeDoorman(running=True), container=container, audit=audit)
+        with self.assertRaises(MaintenanceUnavailable) as raised:
+            svc.start(OWNER)
+        self.assertIn("Rouvrir le serveur", str(raised.exception))
+        with self.assertRaises(MaintenanceUnavailable):
+            svc.restart(OWNER)
+        self.assertEqual((container.starts, container.restarts), (0, 0))
+        self.assertEqual(audit.entries[-1].outcome, "denied")
+
+    def test_start_allowed_once_maintenance_ended(self):
+        container = FakeContainer(running=False)
+        svc = _service(doorman=FakeDoorman(running=False), container=container)
+        svc.start(OWNER)
+        self.assertEqual(container.starts, 1)
+
+    def test_update_allowed_when_no_doorman_in_place(self):
+        svc = _service(doorman=FakeDoorman(running=False), game=FakeGame(players=[]))
+        svc.apply_update(OWNER)
+        self.assertEqual(svc._updater.applied, 1)
+
+    def test_viewer_cannot_add_scheduled(self):
+        svc = _service(scheduled_maintenance=FakeScheduledMaintenance())
+        with self.assertRaises(PermissionDenied):
+            svc.add_scheduled_maintenance(VIEWER, kind="weekly", time_hhmm="04:00", weekdays=(0,))
 
 
 if __name__ == "__main__":

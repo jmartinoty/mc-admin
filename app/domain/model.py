@@ -241,6 +241,10 @@ class ScheduledRestart:
 
     restart_at: datetime
     scheduled_by: str
+    # Garde-fou : si vrai, ne redémarre PAS tant que des joueurs sont
+    # connectés — l'échéance est reportée à chaque tick jusqu'au serveur vide
+    # (cf. tick_scheduled_restart). En mémoire comme le reste de l'op.
+    defer_if_players: bool = False
 
 
 @dataclass(frozen=True)
@@ -268,6 +272,9 @@ class PendingMaintenance:
     motd: str
     kick: str
     operation_id: str = ""
+    # Garde-fou : si vrai, la fermeture est REPORTÉE tant que des joueurs sont
+    # connectés (le tick attend le serveur vide au lieu de les déconnecter).
+    defer_if_players: bool = False
 
 
 @dataclass(frozen=True)
@@ -480,6 +487,34 @@ class RecurringRestart:
 
     time_hhmm: str          # "06:00"
     lead_seconds: int = 300
+    # Garde-fou reporté au one-shot armé chaque jour : si vrai, le redémarrage
+    # quotidien attend que le serveur soit vide plutôt que de couper des
+    # joueurs connectés (persisté avec la config).
+    defer_if_players: bool = False
+
+
+@dataclass(frozen=True)
+class ScheduledMaintenance:
+    """Une maintenance programmée dans la liste (page d'accueil). Deux formes :
+
+    - `kind="once"`   : une date calendaire précise (`date` = "YYYY-MM-DD") + heure ;
+    - `kind="weekly"` : un ou plusieurs jours de semaine (`weekdays`, 0=lundi …
+      6=dimanche) + heure, récurrent chaque semaine.
+
+    Champs partagés : `lead_seconds` (préavis in-game), `message`/`until` du
+    portier, `defer_if_players` (reporter tant que des joueurs sont connectés).
+    L'échéance réelle est armée `lead_seconds` avant l'heure par le tick de fond
+    (mêmes avertissements dégressifs qu'une fermeture annoncée manuelle)."""
+
+    id: str
+    kind: str                        # "once" | "weekly"
+    time_hhmm: str                   # "04:00"
+    date: str = ""                   # "YYYY-MM-DD" (kind=once)
+    weekdays: tuple[int, ...] = ()   # 0=lundi … 6=dimanche (kind=weekly)
+    lead_seconds: int = 300
+    message: str = ""
+    until: str = ""
+    defer_if_players: bool = False
 
 
 @dataclass(frozen=True)

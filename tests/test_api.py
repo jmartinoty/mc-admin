@@ -1849,11 +1849,12 @@ class TestBackupsPage(ApiTestBase):
         page = self.client.get("/backups").text
         self.assertIn("Toutes · 3", page)
         self.assertIn("Manuelles · 1", page)
-        self.assertIn("Manuelles · 13/07/2026 01:54", page)      # titre = nom du profil
+        self.assertIn('class="archive-title">Manuelles<', page)  # titre = nom du profil (sans date)
+        self.assertIn("01:54", page)                             # heure sur le rail de gauche
         self.assertIn("manual/manual-20260713-015422.tar.gz", page)
 
         filtered = self.client.get("/backups?type=auto").text    # onglet = id du profil
-        self.assertIn("Automatiques · 13/07/2026 01:00", filtered)
+        self.assertIn('class="archive-title">Automatiques<', filtered)
         self.assertIn("scheduled/auto-20260713-010000.tar.gz", filtered)
         self.assertNotIn("manual/manual-20260713-015422.tar.gz", filtered)
 
@@ -3343,6 +3344,18 @@ class TestVitalsFragment(ApiTestBase):
         self.assertIn('data-vitals="state"', res.text)
         self.assertIn("en ligne", res.text)
         self.assertIn("playit", res.text)                          # compagnon dans l'infra
+
+    def test_fragment_carries_game_version(self):
+        # La version disparaissait pendant un redémarrage et ne revenait qu'au
+        # rechargement manuel (constaté par Jeremy le 31/07) : elle doit être
+        # portée par le fragment pollé pour se rétablir toute seule.
+        self.login("jeremy", "owner-pw")
+        res = self.client.get("/fragments/vitals")
+        self.assertIn('data-vitals="version"', res.text)
+        self.assertIn("26.1", res.text)                            # version courante
+        # Le formulaire de MAJ, lui, ne doit JAMAIS être dans la zone pollée
+        # (on ne remplace pas un bouton sous le doigt de l'utilisateur).
+        self.assertNotIn('action="/actions/update"', res.text)
 
     def test_fragment_degrades_and_requires_login(self):
         self.assertEqual(self.client.get("/fragments/vitals").status_code, 401)

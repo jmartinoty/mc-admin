@@ -8,3 +8,18 @@
   {%- if code %} <a class="err-code err-code-link" href="{{ docs_code_url(code) }}"
      target="_blank" rel="noopener" title="En savoir plus sur ce message">{{ code }}</a>{% endif %}</p>
 {%- endmacro %}
+
+{# Version du jeu + verdict de mise à jour. Rendue À LA FOIS par la page et par
+   le fragment pollé (elle disparaît pendant un redémarrage et doit revenir
+   toute seule) — d'où la macro partagée, pour qu'il n'existe qu'UN balisage.
+   Le BOUTON de mise à jour, lui, reste hors du fragment : on ne remplace
+   jamais un formulaire sous le doigt de l'utilisateur. #}
+{% macro version_info(update, game_state) -%}
+{%- if update is none -%}
+<span class="muted">version du jeu indisponible <a class="err-code err-code-link" href="{{ docs_code_url('MAJ-90') }}" target="_blank" rel="noopener" title="En savoir plus">MAJ-90</a></span>
+{%- else -%}
+<span class="k">version</span> <b>{{ update.current_version or "?" }}</b>
+{% if game_state %}<span class="badge" title="le jeu ne répond pas encore">vérification…</span>{% elif update.update_available %}<span class="badge ko">{{ update.latest_version ~ " disponible" if update.latest_version else "màj dispo" }}</span>{% else %}<span class="badge ok">à jour</span>{% endif %}
+{% if update.changelog_url %}<a href="{{ update.changelog_url }}" target="_blank" rel="noopener">changelog ↗</a>{% endif %}
+{%- endif -%}
+{%- endmacro %}

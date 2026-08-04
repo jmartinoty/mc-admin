@@ -16,6 +16,18 @@ from domain.model import DetectedServer
 from domain.model import ContainerState
 
 
+def _explain(exc: Exception) -> str:
+    """Message court et lisible d'une erreur docker-py.
+
+    `APIError` porte une `explanation` déjà en clair (ex. « Address already in
+    use ») ; sa représentation complète, elle, est un pavé HTTP avec l'URL et
+    l'ID du conteneur — inutile pour l'utilisateur."""
+    explanation = getattr(exc, "explanation", None)
+    if explanation:
+        return str(explanation).strip('"() ')
+    return str(exc)
+
+
 def ensure_authorized(requested: str, allowed: str) -> None:
     """Refuse explicitement toute cible ≠ conteneur autorisé (garde-fou §7.1)."""
     if requested != allowed:
@@ -75,21 +87,38 @@ class DockerProxyContainer:
         except Exception as exc:  # noqa: BLE001 — lecture : dégradation propre
             raise ServerUnavailable(f"conteneur '{self._name}' injoignable via le proxy") from exc
 
-    # Actions mutantes : on laisse remonter les erreurs (le service les audite).
+    # Actions mutantes : l'échec est TRADUIT en erreur métier (le service
+    # l'audite puis la relaie, et la couche web sait l'afficher). Laisser
+    # passer une exception docker-py brute produisait une 500 illisible —
+    # constaté le 31/07 sur « Démarrer » pendant une maintenance : Docker
+    # refuse l'adresse déjà prise par le portier, l'utilisateur voyait
+    # « Internal Server Error » sans savoir quoi faire.
+    def _do(self, action: str, verb: str, *args, **kwargs) -> None:
+        try:
+            getattr(self._target(), action)(*args, **kwargs)
+        except UnauthorizedContainer:
+            raise
+        except ServerUnavailable:
+            raise
+        except Exception as exc:  # noqa: BLE001 — traduit, jamais masqué
+            raise ServerUnavailable(
+                f"{verb} du conteneur '{self._name}' refusé par Docker : {_explain(exc)}"
+            ) from exc
+
     def restart(self) -> None:
-        self._target().restart()
+        self._do("restart", "redémarrage")
 
     def start(self) -> None:
-        self._target().start()
+        self._do("start", "démarrage")
 
     def stop(self, timeout: int | None = None) -> None:
         # timeout=None -> défaut docker-py (10 s). L'arrêt de maintenance passe
         # une valeur bien plus large : Minecraft sauvegarde ses mondes à
         # l'arrêt et se faisait tuer au SIGKILL avant la fin (spike 19/07/2026).
         if timeout is None:
-            self._target().stop()
+            self._do("stop", "arrêt")
         else:
-            self._target().stop(timeout=timeout)
+            self._do("stop", "arrêt", timeout=timeout)
 
 
 class DockerServerDiscovery:

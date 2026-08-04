@@ -14,7 +14,7 @@ import yaml
 from domain.rbac import build_roles, build_users
 
 # Version affichée dans l'UI et attendue par le tag git de release (vX.Y.Z).
-APP_VERSION = "0.15.0"
+APP_VERSION = "0.16.0"
 # Dépôt public — source des releases pour le bouton MAJ.
 APP_REPO = "jmartinoty/mc-admin"
 
@@ -62,6 +62,7 @@ class Settings:
     mc_doorman_container: str = ""
     doorman_config_file: str = "/data/doorman.json"
     recurring_restart_file: str = "/data/recurring_restart.json"
+    scheduled_maintenance_file: str = "/data/scheduled_maintenance.json"
     backup_schedule_file: str = "/data/backup_schedule.json"
     # Vide = canal désactivé (comme MC_BACKUP_CONTAINER absent).
     discord_webhook_url: str = ""
@@ -149,6 +150,7 @@ class Settings:
             mc_doorman_container=env.get("MC_DOORMAN_CONTAINER", ""),
             doorman_config_file=env.get("DOORMAN_CONFIG_FILE", "/data/doorman.json"),
             recurring_restart_file=env.get("RECURRING_RESTART_FILE", "/data/recurring_restart.json"),
+            scheduled_maintenance_file=env.get("SCHEDULED_MAINTENANCE_FILE", "/data/scheduled_maintenance.json"),
             backup_schedule_file=env.get("BACKUP_SCHEDULE_FILE", "/data/backup_schedule.json"),
             discord_webhook_url=env.get("DISCORD_WEBHOOK_URL", ""),
             telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN", ""),
@@ -540,6 +542,7 @@ def build_service(settings: Settings):
     from adapters.pending_restore import InMemoryPendingRestore
     from adapters.player_stats import FilePlayerStats
     from adapters.recurring_restart import JsonRecurringRestart
+    from adapters.scheduled_maintenance import JsonScheduledMaintenance
     from adapters.restore import DockerRestoreTrigger, NotConfiguredRestore
     restore = (
         DockerRestoreTrigger(settings.mc_restore_container, settings.restore_target_file)
@@ -633,6 +636,7 @@ def build_service(settings: Settings):
         doorman=doorman,
         pending_maintenance=InMemoryPendingMaintenance(),
         recurring_restart=JsonRecurringRestart(settings.recurring_restart_file),
+        scheduled_maintenance=JsonScheduledMaintenance(settings.scheduled_maintenance_file),
         pending_restore=InMemoryPendingRestore(),
         player_stats=(FilePlayerStats(settings.stats_dir, settings.usercache_file,
                                       settings.player_aliases_file)

@@ -136,6 +136,9 @@ class ActionsMixin:
         requested_by: str | None = None,
     ) -> bool:
         self._authorize(user, Permission.RESTART)
+        self._refuse_if_maintenance(
+            user, Permission.RESTART, "utilise « Rouvrir le serveur »"
+        )
         requester = requested_by or user.username
         op_id = operation_id or (
             f"op-levels::{self._clock.now().isoformat()}::{requester}"
@@ -177,17 +180,65 @@ class ActionsMixin:
         )
         return bool(pending_levels)
 
-    def schedule_restart(self, user: User, minutes: float) -> None:
+    # ---- garde-fou « ne pas exécuter tant que des joueurs sont connectés » ----
+
+    def _server_confirmed_empty(self) -> bool:
+        """Vrai UNIQUEMENT si l'on a pu confirmer 0 joueur connecté. En cas de
+        doute (RCON injoignable), renvoie False : un garde-fou ne s'efface pas
+        sur une incertitude — mieux vaut reporter que couper des joueurs
+        peut-être présents (cf. mémoire « vérifier avant action perturbatrice »)."""
+        try:
+            return len(self._game.list_players()) == 0
+        except Exception:  # noqa: BLE001 — injoignable => le vide n'est PAS confirmé
+            return False
+
+    def _note_deferred_once(
+        self, user: User, permission: Permission, operation_id: str, label: str
+    ) -> None:
+        """Annonce le report (in-game + notification + audit) la PREMIÈRE fois
+        qu'une op programmée est retenue par le garde-fou joueurs, puis se tait
+        jusqu'à son exécution ou son annulation — le tick de fond repasse
+        toutes les 2 s, on ne spamme pas."""
+        if operation_id in self._deferred_ops_announced:
+            return
+        self._deferred_ops_announced.add(operation_id)
+        try:
+            self._game.say(
+                f"⏸ {label} reporté : il aura lieu dès que le serveur sera vide."
+            )
+        except Exception:  # noqa: BLE001 — best-effort, comme les autres say
+            pass
+        self._notify.notify(
+            f"{label} reporté",
+            "Des joueurs sont connectés : l'opération programmée attend que le "
+            "serveur soit vide avant de s'exécuter.",
+            "info",
+            event="restart",
+        )
+        self._record(
+            user, permission, "allowed",
+            f"phase=deferred_players_online operation_id={operation_id}",
+        )
+
+    def schedule_restart(
+        self, user: User, minutes: float, *, defer_if_players: bool = False
+    ) -> None:
         """Programme un redémarrage différé avec avertissements dégressifs
         in-game (généralise le say+save-all déjà écrit pour la mise à jour,
         V2.3). L'exécution effective (et les avertissements aux seuils
         suivants) est pilotée par `tick_scheduled_restart`, appelé en tâche
-        de fond par `RestartWarningScheduler` (`app/restart_scheduler.py`)."""
+        de fond par `RestartWarningScheduler` (`app/restart_scheduler.py`).
+
+        `defer_if_players` : garde-fou « ne pas exécuter tant que joueurs
+        connectés » — l'échéance atteinte, le redémarrage attend le serveur
+        vide au lieu de couper les joueurs (cf. `tick_scheduled_restart`)."""
         self._authorize(user, Permission.RESTART)
         if minutes <= 0:
             raise InvalidDuration(f"délai invalide : {minutes}min (doit être > 0)")
         restart_at = self._clock.now() + timedelta(minutes=minutes)
-        self._restart_schedule.schedule(restart_at, user.username, minutes * 60)
+        self._restart_schedule.schedule(
+            restart_at, user.username, minutes * 60, defer_if_players=defer_if_players
+        )
         delay_txt = _format_seconds(int(minutes * 60))  # "30 seconde(s)" / "5 minute(s)"
         try:
             self._game.say(f"⚠ Redémarrage du serveur programmé dans {delay_txt}.")
@@ -205,6 +256,9 @@ class ActionsMixin:
         pending = self._restart_schedule.status()
         had = self._restart_schedule.cancel()
         if had and pending is not None:
+            self._deferred_ops_announced.discard(
+                f"restart::{pending.restart_at.isoformat()}"
+            )
             self._record(user, Permission.RESTART, "allowed",
                          f"phase=restart_cancelled requested_by={user.username} "
                          f"operation_id=restart::{pending.restart_at.isoformat()}")
@@ -225,12 +279,27 @@ class ActionsMixin:
         `app/restart_scheduler.py`)."""
         self._authorize(system_user, Permission.RESTART)
         self._tick_op_levels_operation()
+        # Issue d'une mise à jour du serveur : constatée par ce thread TOUJOURS
+        # actif, pour qu'une MAJ ratée soit notifiée même si personne n'ouvre
+        # la page (même raison que le scan des sauvegardes).
+        self._scan_update_outcome()
         self._tick_recurring_restart(system_user)
         pending = self._restart_schedule.status()
         if pending is None:
             return
         now = self._clock.now()
         if pending.restart_at <= now:
+            operation_id = f"restart::{pending.restart_at.isoformat()}"
+            # Garde-fou « ne pas exécuter tant que joueurs connectés » :
+            # l'échéance est atteinte mais on ne coupe personne. On NE PAS
+            # annule pas la programmation — elle est ré-évaluée au prochain
+            # tick et se déclenchera dès le serveur vide.
+            if pending.defer_if_players and not self._server_confirmed_empty():
+                self._note_deferred_once(
+                    system_user, Permission.RESTART, operation_id, "Redémarrage"
+                )
+                return
+            self._deferred_ops_announced.discard(operation_id)
             with self._op_levels_lock:
                 if self._op_levels_operation is not None:
                     return
@@ -246,7 +315,6 @@ class ActionsMixin:
             except Exception:  # noqa: BLE001 — best-effort, comme apply_update
                 pass
             self._restart_schedule.cancel()
-            operation_id = f"restart::{pending.restart_at.isoformat()}"
             applies_op_levels = self.restart(
                 system_user,
                 operation_id=operation_id,
@@ -269,10 +337,21 @@ class ActionsMixin:
 
     # ---- redémarrage récurrent quotidien (V5 ; barrière RESTART) ----
 
-    def set_recurring_restart(self, user: User, time_hhmm: str, lead_seconds: int = 300) -> None:
+    def set_recurring_restart(
+        self,
+        user: User,
+        time_hhmm: str,
+        lead_seconds: int = 300,
+        *,
+        defer_if_players: bool = False,
+    ) -> None:
         """Active « tous les jours à HH:MM » (heure locale). Le déclenchement
         réel passe par le one-shot habituel (donc mêmes avertissements in-game),
-        programmé `lead_seconds` avant l'échéance par le tick de fond."""
+        programmé `lead_seconds` avant l'échéance par le tick de fond.
+
+        `defer_if_players` : reporté au one-shot armé chaque jour — le
+        redémarrage quotidien attend le serveur vide au lieu de couper des
+        joueurs connectés."""
         self._authorize(user, Permission.RESTART)
         if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", time_hhmm or ""):
             raise InvalidDuration(f"heure invalide : {time_hhmm!r} (attendu HH:MM)")
@@ -280,9 +359,17 @@ class ActionsMixin:
             raise InvalidDuration(f"préavis invalide : {lead_seconds}s (doit être > 0)")
         if self._recurring_restart is None:
             raise ServerUnavailable("redémarrage récurrent non configuré côté serveur")
-        self._recurring_restart.set_config(RecurringRestart(time_hhmm=time_hhmm, lead_seconds=lead_seconds))
+        self._recurring_restart.set_config(
+            RecurringRestart(
+                time_hhmm=time_hhmm,
+                lead_seconds=lead_seconds,
+                defer_if_players=defer_if_players,
+            )
+        )
+        defer_txt = " · attend le serveur vide" if defer_if_players else ""
         self._record(user, Permission.RESTART, "allowed",
-                     f"redémarrage récurrent activé : tous les jours à {time_hhmm} (préavis {_format_seconds(lead_seconds)})")
+                     f"redémarrage récurrent activé : tous les jours à {time_hhmm} "
+                     f"(préavis {_format_seconds(lead_seconds)}){defer_txt}")
 
     def clear_recurring_restart(self, user: User) -> None:
         self._authorize(user, Permission.RESTART)
@@ -318,7 +405,10 @@ class ActionsMixin:
         if remaining > cfg.lead_seconds:
             return  # pas encore dans la fenêtre de préavis
         if self._restart_schedule.status() is None:  # ne jamais écraser un one-shot manuel
-            self._restart_schedule.schedule(target, system_user.username, remaining)
+            self._restart_schedule.schedule(
+                target, system_user.username, remaining,
+                defer_if_players=cfg.defer_if_players,
+            )
             try:
                 self._game.say(f"⚠ Redémarrage quotidien programmé dans {_format_seconds(int(remaining))}.")
             except Exception:  # noqa: BLE001
@@ -330,6 +420,9 @@ class ActionsMixin:
     def start(self, user: User) -> None:
         """Démarrage du conteneur arrêté (moins sensible que STOP : permission dédiée)."""
         self._authorize(user, Permission.START)
+        self._refuse_if_maintenance(
+            user, Permission.START, "utilise « Rouvrir le serveur »"
+        )
         operation_id = (
             f"op-levels::{self._clock.now().isoformat()}::{user.username}"
         )

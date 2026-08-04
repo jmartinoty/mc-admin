@@ -58,7 +58,9 @@ class PrometheusMetrics:
         except urllib.error.HTTPError:
             # Requête refusée (ex. PromQL invalide) : n'invalide que cette métrique.
             return None
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, ValueError) as exc:
+            # ValueError : urllib sur une URL sans schéma (PROMETHEUS_URL vide,
+            # cf. patch-notes.md 20/07/2026) — même dégradation que injoignable.
             raise ServerUnavailable(f"Prometheus injoignable ({self._base})") from exc
         result = (data.get("data") or {}).get("result") or []
         if data.get("status") != "success" or not result:
@@ -99,7 +101,9 @@ class PrometheusMetrics:
             data = self._fetch(url)
         except urllib.error.HTTPError:
             return []
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, ValueError) as exc:
+            # ValueError : urllib sur une URL sans schéma (PROMETHEUS_URL vide,
+            # cf. patch-notes.md 20/07/2026) — même dégradation que injoignable.
             raise ServerUnavailable(f"Prometheus injoignable ({self._base})") from exc
         if data.get("status") != "success":
             return []

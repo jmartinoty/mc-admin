@@ -5,6 +5,39 @@ Liste courte, par ordre antéchronologique, de chaque correctif — distincte du
 date, une ligne de constat, une ligne de cause/fix. Mise à jour à chaque bug
 fix, même hors release.
 
+## 2026-07-31
+
+- **La version du jeu ne revenait qu'au rechargement manuel de la page** —
+  constaté par Jeremy après un redémarrage de la prod. Pendant l'arrêt,
+  mc-monitor n'expose plus de mesure : la version passe à « ? », et la
+  ligne n'était PAS dans le fragment pollé (exclue par crainte de
+  marteler l'API Mojang). Or le check est déjà mis en cache 60 s côté
+  adapter : la version rejoint donc la zone rafraîchie et se rétablit
+  seule. Le BOUTON de mise à jour reste hors du fragment — on ne
+  remplace jamais un formulaire sous le doigt de l'utilisateur.
+
+
+- **« Démarrer » pendant une maintenance → « Internal Server Error »** —
+  constaté par Jeremy en prod. Le portier occupe l'adresse STATIQUE du
+  serveur : Docker refuse le démarrage (`Address already in use`), et
+  l'exception docker-py brute n'étant pas une erreur métier, elle
+  échappait au filet de la route et sortait en 500. Double fix : (1)
+  `start()`/`restart()` refusent net pendant une maintenance, en indiquant
+  le geste correct (« Rouvrir le serveur »), refus audité ; (2) toute
+  action mutante de l'adapter Docker traduit désormais l'échec en erreur
+  métier avec l'explication lisible (« Address already in use ») au lieu
+  du pavé HTTP — plus aucune 500 possible sur start/stop/restart.
+
+
+- **MOTD de maintenance redondant : « ⚙ Maintenance en cours » suivi de
+  « Le serveur est fermé pour maintenance. »** — constaté par Jeremy en
+  test réel du portier sur la prod. Le message par défaut remplissait la
+  2ᵉ ligne même quand elle n'ajoutait rien, répétant le titre. Fix : la
+  2ᵉ ligne ne porte plus que ce qui informe (message personnalisé et/ou
+  retour prévu) ; sans rien à dire, le MOTD tient sur la seule ligne de
+  titre. Le refus au login garde une phrase complète (le joueur n'a pas
+  le titre sous les yeux).
+
 ## 2026-07-27
 
 - **Tuiles : la sparkline passait par-dessus le libellé (RAM/TPS) et
@@ -36,6 +69,14 @@ fix, même hors release.
 
 ## 2026-07-20
 
+- **Page d'accueil en erreur 500 quand `PROMETHEUS_URL` est vide.** Constaté
+  en labo Docker (install fraîche, Prometheus facultatif non configuré) :
+  `urllib.request.urlopen` lève `ValueError` (« unknown url type ») sur une
+  URL sans schéma, non capturée par `PrometheusMetrics._query_value`/
+  `_query_vector` (seules les erreurs réseau l'étaient) — remontait en 500
+  brut au lieu du panneau « indisponible » déjà prévu. Fix : `ValueError`
+  ajoutée aux exceptions qui dégradent en `ServerUnavailable`
+  (`app/adapters/prometheus.py`).
 - **BlueMap : modélisation précise perdue ~100 blocs après un bâtiment
   chargé.** Réglage `hires-slider-default` de BlueMap à 100 (défaut du
   logiciel) — bascule en basse résolution dès qu'on s'éloigne. Remonté à 300

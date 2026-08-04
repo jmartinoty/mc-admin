@@ -31,10 +31,11 @@ cas que les joueurs vivent exactement comme un redémarrage long.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+import re
+from datetime import datetime, timedelta
 
-from domain.errors import InvalidDuration, MaintenanceUnavailable
-from domain.model import MaintenanceStatus, Permission, User
+from domain.errors import InvalidDuration, MaintenanceUnavailable, ServerUnavailable
+from domain.model import MaintenanceStatus, Permission, ScheduledMaintenance, User
 from domain.services.base import _format_seconds
 
 # Laissé à Minecraft pour sauvegarder ses mondes avant le SIGKILL. Le défaut
@@ -52,11 +53,30 @@ def build_maintenance_messages(message: str, until: str = "") -> tuple[str, str]
     Fonction PURE, testée à part : c'est le seul endroit où l'on décide ce que
     le joueur lit, et le portier n'a aucune logique de présentation.
     """
-    body = " ".join((message or "").split())[:120] or _DEFAULT_MESSAGE
+    body = " ".join((message or "").split())[:120]
     horizon = " ".join((until or "").split())[:40]
-    second_line = f"{body} §7(retour prévu : {horizon})" if horizon else body
-    motd = f"{_DEFAULT_MOTD_TITLE}\n§f{second_line}"
-    kick = body if not horizon else f"{body}\n\nRetour prévu : {horizon}"
+    # Le TITRE dit déjà « Maintenance en cours » : la 2e ligne ne le répète pas
+    # (retour Jeremy 31/07 — « Maintenance en cours » suivi de « Le serveur est
+    # fermé pour maintenance » était redondant). Elle ne porte que ce qui AJOUTE
+    # de l'information : le message personnalisé et/ou le retour prévu.
+    if body and horizon:
+        second_line = f"{body} §7(retour prévu : {horizon})"
+    elif body:
+        second_line = body
+    elif horizon:
+        second_line = f"§7retour prévu : {horizon}"
+    else:
+        second_line = ""
+    if not second_line:
+        motd = _DEFAULT_MOTD_TITLE
+    else:
+        # Pas de §f devant une ligne qui porte déjà sa couleur (évite « §f§7 »).
+        prefix = "" if second_line.startswith("§") else "§f"
+        motd = f"{_DEFAULT_MOTD_TITLE}\n{prefix}{second_line}"
+    # Refus au login : le joueur n'a PAS le titre sous les yeux, il faut donc
+    # une phrase complète -> le message par défaut reprend sa place ici.
+    kick_body = body or _DEFAULT_MESSAGE
+    kick = kick_body if not horizon else f"{kick_body}\n\nRetour prévu : {horizon}"
     return motd, kick
 
 
@@ -94,9 +114,14 @@ class MaintenanceMixin:
         message: str = "",
         until: str = "",
         grace_minutes: float = 0.0,
+        defer_if_players: bool = False,
     ) -> None:
         """Ferme le serveur, soit tout de suite, soit après un délai de grâce
-        annoncé in-game (avertissements dégressifs par `tick_maintenance`)."""
+        annoncé in-game (avertissements dégressifs par `tick_maintenance`).
+
+        `defer_if_players` (uniquement avec un délai de grâce) : la fermeture
+        est reportée tant que des joueurs sont connectés — le tick attend le
+        serveur vide au lieu de les déconnecter à l'échéance."""
         self._authorize(user, Permission.MAINTENANCE)
         if self._doorman is None:
             raise MaintenanceUnavailable(
@@ -121,7 +146,8 @@ class MaintenanceMixin:
             )
         engage_at = self._clock.now() + timedelta(minutes=grace_minutes)
         self._pending_maintenance.schedule(
-            engage_at, user.username, motd, kick, grace_minutes * 60
+            engage_at, user.username, motd, kick, grace_minutes * 60,
+            defer_if_players=defer_if_players,
         )
         delay_txt = _format_seconds(int(grace_minutes * 60))
         try:
@@ -282,6 +308,7 @@ class MaintenanceMixin:
         Même discipline que `tick_scheduled_restart` — le thread ne connaît
         que le service, jamais les ports."""
         self._authorize(system_user, Permission.MAINTENANCE)
+        self._tick_scheduled_maintenance(system_user)
         if self._pending_maintenance is None:
             return
         pending = self._pending_maintenance.status()
@@ -289,6 +316,16 @@ class MaintenanceMixin:
             return
         now = self._clock.now()
         if pending.engage_at <= now:
+            # Garde-fou « ne pas exécuter tant que joueurs connectés » : à
+            # l'échéance, on ne déconnecte personne — la fermeture reste en
+            # attente (jamais annulée) et s'engage dès le serveur vide.
+            if pending.defer_if_players and not self._server_confirmed_empty():
+                self._note_deferred_once(
+                    system_user, Permission.MAINTENANCE,
+                    pending.operation_id, "Maintenance",
+                )
+                return
+            self._deferred_ops_announced.discard(pending.operation_id)
             self._pending_maintenance.cancel()
             self._engage_maintenance(
                 system_user,
@@ -306,3 +343,156 @@ class MaintenanceMixin:
                 )
             except Exception:  # noqa: BLE001
                 pass
+
+    # ---- maintenances programmées (liste ; barrière MAINTENANCE) ----
+
+    def add_scheduled_maintenance(
+        self,
+        user: User,
+        *,
+        kind: str,
+        time_hhmm: str,
+        date: str = "",
+        weekdays: tuple[int, ...] = (),
+        lead_seconds: int = 300,
+        message: str = "",
+        until: str = "",
+        defer_if_players: bool = False,
+    ) -> str:
+        """Ajoute une maintenance programmée à la liste. `kind="once"` = une
+        date précise (`date`="AAAA-MM-JJ") ; `kind="weekly"` = des jours de
+        semaine (`weekdays`, 0=lundi). Renvoie l'identifiant créé. Le tick de
+        fond arme la fermeture annoncée `lead_seconds` avant l'heure."""
+        self._authorize(user, Permission.MAINTENANCE)
+        if self._scheduled_maintenance is None:
+            raise ServerUnavailable("maintenances programmées non configurées côté serveur")
+        if kind not in ("once", "weekly"):
+            raise InvalidDuration(f"type de programmation invalide : {kind!r}")
+        if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", time_hhmm or ""):
+            raise InvalidDuration(f"heure invalide : {time_hhmm!r} (attendu HH:MM)")
+        if lead_seconds <= 0:
+            raise InvalidDuration(f"préavis invalide : {lead_seconds}s (doit être > 0)")
+        clean_date = ""
+        clean_weekdays: tuple[int, ...] = ()
+        if kind == "once":
+            try:
+                d = datetime.strptime(date or "", "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise InvalidDuration(f"date invalide : {date!r} (attendu AAAA-MM-JJ)") from exc
+            if d < self._clock.now().astimezone().date():
+                raise InvalidDuration("date déjà passée")
+            clean_date = d.isoformat()
+        else:  # weekly
+            clean_weekdays = tuple(sorted({int(w) for w in weekdays if 0 <= int(w) <= 6}))
+            if not clean_weekdays:
+                raise InvalidDuration("aucun jour de semaine sélectionné")
+        entry_id = self._scheduled_maintenance.add(
+            ScheduledMaintenance(
+                id="", kind=kind, time_hhmm=time_hhmm,
+                date=clean_date, weekdays=clean_weekdays,
+                lead_seconds=lead_seconds,
+                message=self._sanitize_reason(message),
+                until=self._sanitize_reason(until),
+                defer_if_players=defer_if_players,
+            )
+        )
+        when = clean_date if kind == "once" else "jours=" + ",".join(str(w) for w in clean_weekdays)
+        self._record(user, Permission.MAINTENANCE, "allowed",
+                     f"maintenance programmée ajoutée (id={entry_id} {kind} {when} {time_hhmm})")
+        return entry_id
+
+    def remove_scheduled_maintenance(self, user: User, entry_id: str) -> None:
+        self._authorize(user, Permission.MAINTENANCE)
+        had = (
+            self._scheduled_maintenance.remove(entry_id)
+            if self._scheduled_maintenance is not None else False
+        )
+        self._record(
+            user, Permission.MAINTENANCE, "allowed",
+            f"maintenance programmée retirée (id={entry_id})" if had else "rien à retirer",
+        )
+
+    def list_scheduled_maintenance(self, user: User) -> list[ScheduledMaintenance]:
+        """Lecture (même barrière que la configuration, non auditée en succès)."""
+        self._authorize(user, Permission.MAINTENANCE)
+        return (
+            self._scheduled_maintenance.list()
+            if self._scheduled_maintenance is not None else []
+        )
+
+    def _scheduled_target_today(
+        self, entry: ScheduledMaintenance, local_now: datetime
+    ) -> datetime | None:
+        """Échéance d'AUJOURD'HUI pour cette entrée, ou None si elle ne
+        s'applique pas ce jour (mauvais jour de semaine / autre date)."""
+        try:
+            hour, minute = (int(p) for p in entry.time_hhmm.split(":"))
+        except (ValueError, TypeError):
+            return None
+        if entry.kind == "once":
+            if entry.date != local_now.date().isoformat():
+                return None
+        elif entry.kind == "weekly":
+            if local_now.weekday() not in entry.weekdays:
+                return None
+        else:
+            return None
+        return local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    def _tick_scheduled_maintenance(self, system_user: User) -> None:
+        """Arme la fermeture annoncée pour la première entrée entrée dans sa
+        fenêtre de préavis. Une seule armée par tick, une seule fois par jour et
+        par entrée (persisté). Pas de rattrapage si mc-admin a démarré après
+        l'heure (fermer par surprise serait pire). Les entrées `once` passées
+        sont nettoyées."""
+        if self._scheduled_maintenance is None or self._pending_maintenance is None:
+            return
+        if self._doorman is None:
+            return  # aucun portier : rien à armer (comme enter_maintenance)
+        entries = self._scheduled_maintenance.list()
+        if not entries:
+            return
+        # Ne jamais écraser une fermeture déjà annoncée ni fermer un serveur
+        # déjà en maintenance.
+        if self._pending_maintenance.status() is not None:
+            return
+        try:
+            if self._doorman.is_running():
+                return
+        except Exception:  # noqa: BLE001 — lecture Docker : on tente quand même
+            pass
+        local_now = self._clock.now().astimezone()
+        today = local_now.date().isoformat()
+        for entry in entries:
+            if entry.kind == "once" and entry.date and entry.date < today:
+                self._scheduled_maintenance.remove(entry.id)  # date passée : ménage
+                continue
+            target = self._scheduled_target_today(entry, local_now)
+            if target is None:
+                continue
+            if self._scheduled_maintenance.last_fired(entry.id) == today:
+                continue
+            if local_now >= target:
+                self._scheduled_maintenance.mark_fired(entry.id, today)  # fenêtre passée
+                if entry.kind == "once":
+                    self._scheduled_maintenance.remove(entry.id)
+                continue
+            remaining = (target - local_now).total_seconds()
+            if remaining > entry.lead_seconds:
+                continue  # pas encore dans la fenêtre de préavis
+            motd, kick = build_maintenance_messages(entry.message, entry.until)
+            self._pending_maintenance.schedule(
+                target, system_user.username, motd, kick, remaining,
+                defer_if_players=entry.defer_if_players,
+            )
+            try:
+                self._game.say(
+                    "⚠ Fermeture programmée pour maintenance dans "
+                    f"{_format_seconds(int(remaining))}."
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            self._record(system_user, Permission.MAINTENANCE, "allowed",
+                         f"maintenance programmée armée (à {entry.time_hhmm})")
+            self._scheduled_maintenance.mark_fired(entry.id, today)
+            return  # une seule armée par tick

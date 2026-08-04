@@ -91,6 +91,25 @@ class TestActions(unittest.TestCase):
         adapter.stop()
         self.assertTrue(c.stopped)
 
+    def test_docker_failure_becomes_domain_error_with_readable_message(self):
+        # Incident du 31/07 : « Address already in use » (adresse tenue par le
+        # portier) remontait en exception docker-py brute -> erreur 500. Toute
+        # action mutante doit échouer en erreur MÉTIER, avec l'explication
+        # lisible et sans le pavé HTTP de docker-py.
+        class Boom(Exception):
+            explanation = "Address already in use"
+
+        class FailingContainer(FakeContainerObj):
+            def start(self):
+                raise Boom('403 Client Error for http+docker://... ("Address already in use")')
+
+        adapter, _c = _adapter(container=FailingContainer())
+        with self.assertRaises(ServerUnavailable) as raised:
+            adapter.start()
+        message = str(raised.exception)
+        self.assertIn("Address already in use", message)
+        self.assertNotIn("403 Client Error", message)   # pavé HTTP écarté
+
 
 if __name__ == "__main__":
     unittest.main()

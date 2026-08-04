@@ -113,6 +113,16 @@ class TestPrometheusMetrics(unittest.TestCase):
         adapter = PrometheusMetrics("http://prom:9090", SPECS[:1], fetch=lambda u: {"status": "success", "data": {"result": [{"value": []}]}})
         self.assertIsNone(adapter.snapshot()[0].value)
 
+    def test_empty_base_url_raises_server_unavailable(self):
+        # PROMETHEUS_URL="" (facultatif, non configuré) : urllib lève
+        # ValueError sur l'URL sans schéma AVANT toute tentative réseau —
+        # doit dégrader comme un Prometheus injoignable, jamais un 500 brut
+        # (bug réel constaté le 20/07/2026, cf. patch-notes.md). Pas de
+        # fetch injecté : on exerce le vrai urllib.request.urlopen.
+        adapter = PrometheusMetrics("", SPECS)
+        with self.assertRaises(ServerUnavailable):
+            adapter.snapshot()
+
 
 class TestPerformance(unittest.TestCase):
     """performance() (V6.7) : vecteurs labellisés + séries par monde."""
@@ -153,6 +163,13 @@ class TestPerformance(unittest.TestCase):
         def fetch(url):
             raise urllib.error.URLError("down")
         adapter = PrometheusMetrics("http://prom:9090", [], fetch=fetch)
+        with self.assertRaises(ServerUnavailable):
+            adapter.performance()
+
+    def test_empty_base_url_raises_server_unavailable(self):
+        # Même bug que TestPrometheusMetrics, via _query_vector (topk) —
+        # vrai urllib, pas de fetch injecté.
+        adapter = PrometheusMetrics("", [])
         with self.assertRaises(ServerUnavailable):
             adapter.performance()
 

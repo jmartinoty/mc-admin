@@ -19,6 +19,7 @@ from adapters.display_names import JsonDisplayNames
 from adapters.mod_checks import JsonModChecks
 from adapters.notification_config import JsonNotificationConfig
 from adapters.recurring_restart import JsonRecurringRestart
+from adapters.scheduled_maintenance import JsonScheduledMaintenance
 from adapters.servers_store import JsonServers
 from adapters.users_store import JsonUsers
 from adapters.watched_store import JsonWatched
@@ -26,6 +27,7 @@ from domain.errors import DomainError
 from domain.model import (
     BackupProfile,
     RecurringRestart,
+    ScheduledMaintenance,
     ServerEntry,
 )
 
@@ -138,6 +140,50 @@ class TestOtherJsonStores(JsonStoreTestCase):
 
         self.assertEqual(JsonRecurringRestart(path).get(), config)
         self.assertEqual(JsonRecurringRestart(path).last_fired(), "2026-07-18")
+
+    def test_recurring_restart_persists_defer_flag(self):
+        path = self.path("recurring.json")
+        store = JsonRecurringRestart(path)
+        store.set_config(
+            RecurringRestart(time_hhmm="04:00", lead_seconds=300, defer_if_players=True)
+        )
+        self.assertTrue(JsonRecurringRestart(path).get().defer_if_players)
+
+    def test_recurring_restart_defer_absent_reads_false(self):
+        # Migration douce : une config écrite avant l'option (clé absente) se
+        # relit avec defer_if_players=False, aucun redémarrage historique modifié.
+        path = self.path("recurring.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"time": "06:00", "lead_seconds": 300}, fh)
+        self.assertFalse(JsonRecurringRestart(path).get().defer_if_players)
+
+    def test_scheduled_maintenance_add_list_and_fired(self):
+        path = self.path("scheduled-maint.json")
+        store = JsonScheduledMaintenance(path)
+        eid = store.add(ScheduledMaintenance(
+            id="", kind="weekly", time_hhmm="04:00", weekdays=(6, 0),
+            lead_seconds=600, message="Nocturne", until="04h30", defer_if_players=True,
+        ))
+        self.assertTrue(eid)
+        store.mark_fired(eid, "2026-07-20")
+        reread = JsonScheduledMaintenance(path)
+        entries = reread.list()
+        self.assertEqual(len(entries), 1)
+        m = entries[0]
+        self.assertEqual((m.kind, m.time_hhmm, m.weekdays), ("weekly", "04:00", (0, 6)))
+        self.assertTrue(m.defer_if_players)
+        self.assertEqual(reread.last_fired(eid), "2026-07-20")
+
+    def test_scheduled_maintenance_remove_drops_entry_and_fired(self):
+        path = self.path("scheduled-maint.json")
+        store = JsonScheduledMaintenance(path)
+        eid = store.add(ScheduledMaintenance(id="", kind="once", date="2026-08-15", time_hhmm="03:00"))
+        store.mark_fired(eid, "2026-08-15")
+        self.assertTrue(store.remove(eid))
+        reread = JsonScheduledMaintenance(path)
+        self.assertEqual(reread.list(), [])
+        self.assertIsNone(reread.last_fired(eid))
+        self.assertFalse(store.remove("inconnu"))
 
 
 class TestCorruptStateProtection(unittest.TestCase):

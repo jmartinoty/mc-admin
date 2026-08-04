@@ -32,6 +32,7 @@ from domain.model import (
     Player,
     RestoreOperation,
     StorageSnapshot,
+    UpdateStatus,
 )
 from domain.rbac import build_roles, build_users
 from domain.services import AdminService
@@ -319,6 +320,7 @@ class TestScheduledRestart(unittest.TestCase):
         self.recurring = FakeRecurringRestart()
         self.pending_op_levels = FakePendingOpLevels()
         self.op_levels_apply = FakeOpLevelsApply()
+        self.notifier = FakeNotifier()
         self.service = AdminService(
             game=self.game,
             container=self.container,
@@ -329,7 +331,7 @@ class TestScheduledRestart(unittest.TestCase):
             metrics=FakeMetrics(),
             updater=FakeUpdater(),
             ops=FakeOps(),
-            notifications=FakeNotifier(),
+            notifications=self.notifier,
             player_history=FakePlayerHistory(),
             backup_archives=FakeBackupArchives(),
             bans=FakeBans(),
@@ -482,6 +484,58 @@ class TestScheduledRestart(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.service.tick_scheduled_restart(self.system_user)
         self.assertEqual(self.audit.entries[-1].outcome, "error")
+
+    # ---- garde-fou « ne pas exécuter tant que joueurs connectés » ----
+
+    def test_defer_holds_restart_while_players_online_then_fires_when_empty(self):
+        self.service.schedule_restart(self.owner, 10, defer_if_players=True)
+        self.clock.moment += timedelta(minutes=10)  # échéance atteinte
+        # alice est connectée -> on NE redémarre PAS, la programmation reste.
+        self.service.tick_scheduled_restart(self.system_user)
+        self.assertEqual(self.container.restarts, 0)
+        self.assertIsNotNone(self.restart_schedule.status())
+        self.assertIn("phase=deferred_players_online", self.audit.entries[-1].detail)
+        # Serveur vidé -> le tick suivant déclenche enfin le redémarrage.
+        self.game._players = []
+        self.service.tick_scheduled_restart(self.system_user)
+        self.assertEqual(self.container.restarts, 1)
+        self.assertIsNone(self.restart_schedule.status())
+
+    def test_defer_announced_once_not_every_tick(self):
+        self.service.schedule_restart(self.owner, 10, defer_if_players=True)
+        self.clock.moment += timedelta(minutes=10)
+        self.service.tick_scheduled_restart(self.system_user)
+        self.service.tick_scheduled_restart(self.system_user)
+        # Une notification de report envoyée UNE seule fois malgré deux ticks.
+        notes = [t for (t, *_rest) in self.notifier.sent if t == "Redémarrage reporté"]
+        self.assertEqual(len(notes), 1)
+
+    def test_defer_when_rcon_unavailable_does_not_execute(self):
+        # RCON muet : le vide n'est PAS confirmé -> on reporte (garde-fou ne
+        # s'efface pas sur une incertitude), jamais de redémarrage à l'aveugle.
+        self.service.schedule_restart(self.owner, 10, defer_if_players=True)
+        self.clock.moment += timedelta(minutes=10)
+        self.game._available = False
+        self.service.tick_scheduled_restart(self.system_user)
+        self.assertEqual(self.container.restarts, 0)
+        self.assertIsNotNone(self.restart_schedule.status())
+
+    def test_defer_off_restarts_even_with_players(self):
+        # Sans le flag : comportement historique inchangé (redémarre malgré alice).
+        self.service.schedule_restart(self.owner, 10)
+        self.clock.moment += timedelta(minutes=10)
+        self.service.tick_scheduled_restart(self.system_user)
+        self.assertEqual(self.container.restarts, 1)
+
+    def test_recurring_propagates_defer_flag_to_armed_oneshot(self):
+        from domain.model import RecurringRestart
+        self.recurring.config = RecurringRestart(
+            time_hhmm=self._hhmm_in(3), lead_seconds=300, defer_if_players=True
+        )
+        self.service.tick_scheduled_restart(self.system_user)
+        pending = self.restart_schedule.status()
+        self.assertIsNotNone(pending)
+        self.assertTrue(pending.defer_if_players)
 
     # ---- récurrent quotidien ----
 
@@ -1379,7 +1433,63 @@ class TestUpdate(ServiceTestBase):
         self.assertEqual(self.updater.applied, 1)
         entry = self.audit.entries[-1]
         self.assertEqual((entry.action, entry.outcome), ("UPDATE", "allowed"))
-        self.assertEqual(entry.detail, "say; save-all; mc-updater démarré")
+        self.assertIn("say; save-all; mc-updater démarré", entry.detail)
+        self.assertIn("phase=update_started", entry.detail)
+
+    # ---- issue RÉELLE de la mise à jour (le one-shot travaille en asynchrone) ----
+
+    def test_update_outcome_success_notifies_new_version(self):
+        self.game._players = []
+        self.service.apply_update(self.owner)
+        self.notifier.sent.clear()
+        # mc-updater a fini proprement, le serveur tourne en 26.2
+        self.updater.running = False
+        self.updater.code = 0
+        self.updater.status = UpdateStatus(current_version="26.2", latest_version="26.2",
+                                           update_available=False, changelog_url=None)
+        self.service.update_status(self.owner)   # le polling constate l'issue
+        titles = [t for (t, *_r) in self.notifier.sent]
+        self.assertIn("Serveur mis à jour", titles)
+        body = next(m for (t, m, *_r) in self.notifier.sent if t == "Serveur mis à jour")
+        self.assertIn("26.1", body)   # version d'avant
+        self.assertIn("26.2", body)   # version d'après
+        entry = self.audit.entries[-1]
+        self.assertEqual(entry.username, "update-watch")
+        self.assertIn("phase=update_done", entry.detail)
+
+    def test_update_outcome_failure_notifies_error(self):
+        self.game._players = []
+        self.service.apply_update(self.owner)
+        self.notifier.sent.clear()
+        self.updater.running = False
+        self.updater.code = 1          # le conteneur a échoué
+        self.service.update_status(self.owner)
+        titles = [t for (t, *_r) in self.notifier.sent]
+        self.assertIn("Mise à jour du serveur échouée", titles)
+        entry = self.audit.entries[-1]
+        self.assertEqual((entry.username, entry.outcome), ("update-watch", "error"))
+        self.assertIn("phase=update_failed", entry.detail)
+
+    def test_update_outcome_silent_while_still_running(self):
+        self.game._players = []
+        self.service.apply_update(self.owner)
+        self.notifier.sent.clear()
+        self.service.update_status(self.owner)   # toujours en cours
+        self.assertEqual(self.notifier.sent, [])
+
+    def test_update_outcome_unreadable_state_never_concludes(self):
+        # État Docker illisible : on ne conclut RIEN (jamais un faux « terminé »),
+        # et l'issue reste constatable au passage suivant.
+        self.game._players = []
+        self.service.apply_update(self.owner)
+        self.notifier.sent.clear()
+        self.updater.status_fails = True
+        self.service.update_status(self.owner)
+        self.assertEqual(self.notifier.sent, [])
+        self.updater.status_fails = False
+        self.updater.running = False
+        self.service.update_status(self.owner)
+        self.assertIn("Serveur mis à jour", [t for (t, *_r) in self.notifier.sent])
 
     def test_no_players_proceeds_without_force(self):
         self.game._players = []

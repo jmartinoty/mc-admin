@@ -30,9 +30,19 @@ class InMemoryRestartSchedule:
         self._thresholds = tuple(sorted(warning_thresholds, reverse=True))
         self._announced: set[int] = set()
 
-    def schedule(self, restart_at: datetime, username: str, total_seconds: float) -> None:
+    def schedule(
+        self,
+        restart_at: datetime,
+        username: str,
+        total_seconds: float,
+        defer_if_players: bool = False,
+    ) -> None:
         with self._lock:
-            self._state = ScheduledRestart(restart_at=restart_at, scheduled_by=username)
+            self._state = ScheduledRestart(
+                restart_at=restart_at,
+                scheduled_by=username,
+                defer_if_players=defer_if_players,
+            )
             # Seuils déjà dans le passé pour CE délai (ex. programmer 4 min à
             # l'avance ne doit jamais annoncer "10 min") : pré-marqués ici,
             # une fois pour toutes, plutôt que déduits plus tard d'un "now"

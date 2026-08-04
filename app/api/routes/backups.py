@@ -87,7 +87,9 @@ def _archive_view(archive, profiles=()) -> dict[str, object]:
         "archive": archive,
         "kind": kind,
         "label": label,
-        "title": f"{label.capitalize()} · {archive.created_at.astimezone().strftime('%d/%m/%Y %H:%M')}",
+        # Ni date ni heure ici : le jour est en en-tête de groupe et l'heure
+        # est sur le rail de gauche (redondant sinon).
+        "title": label.capitalize(),
     }
 
 

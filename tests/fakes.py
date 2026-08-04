@@ -322,6 +322,37 @@ class FakeRecurringRestart:
         self.fired_day = day
 
 
+class FakeScheduledMaintenance:
+    """Fake ScheduledMaintenancePort — liste en mémoire."""
+
+    def __init__(self, entries=None):
+        self._entries = list(entries or [])
+        self._fired = {}
+        self._counter = 0
+
+    def list(self):
+        return list(self._entries)
+
+    def add(self, entry) -> str:
+        from dataclasses import replace
+        self._counter += 1
+        eid = entry.id or f"e{self._counter}"
+        self._entries.append(replace(entry, id=eid))
+        return eid
+
+    def remove(self, entry_id: str) -> bool:
+        before = len(self._entries)
+        self._entries = [e for e in self._entries if e.id != entry_id]
+        self._fired.pop(entry_id, None)
+        return len(self._entries) != before
+
+    def last_fired(self, entry_id: str):
+        return self._fired.get(entry_id)
+
+    def mark_fired(self, entry_id: str, day: str) -> None:
+        self._fired[entry_id] = day
+
+
 class FakeArchiveChecks:
     """Fake ArchiveChecksPort — verdicts en mémoire."""
 
@@ -534,6 +565,11 @@ class FakeUpdater:
         )
         self._apply_fails = apply_fails
         self.applied = 0
+        # Issue du one-shot : `running` True tant qu'il travaille ; `code` est
+        # le code de sortie une fois terminé (None = rien d'exploitable).
+        self.running = False
+        self.code: int | None = 0
+        self.status_fails = False   # is_running() lève (état illisible)
 
     def check(self) -> UpdateStatus:
         return self.status
@@ -542,6 +578,15 @@ class FakeUpdater:
         if self._apply_fails:
             raise UpdateUnavailable("mc-updater absent")
         self.applied += 1
+        self.running = True
+
+    def is_running(self) -> bool:
+        if self.status_fails:
+            raise UpdateUnavailable("état du conteneur illisible")
+        return self.running
+
+    def exit_code(self) -> int | None:
+        return None if self.running else self.code
 
 
 class FakeOps:

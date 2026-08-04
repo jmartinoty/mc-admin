@@ -1,5 +1,5 @@
 {% extends "shell.html" %}
-{% from "_macros.html" import degraded %}
+{% from "_macros.html" import degraded, version_info %}
 {% block page %}
 {# Maintenance — le bandeau est visible de TOUS (savoir que le serveur est
    volontairement fermé est une information, pas un privilège) ; seuls les
@@ -117,12 +117,11 @@
       {% if can_update or mod_count is not none %}
       <div class="verline">
         {% if can_update %}
-        {% if update is none %}
-          <span class="muted">version du jeu indisponible <a class="err-code err-code-link" href="{{ docs_code_url('MAJ-90') }}" target="_blank" rel="noopener" title="En savoir plus">MAJ-90</a></span>
-        {% else %}
-          <span class="k">version</span> <b>{{ update.current_version or "?" }}</b>
-          {% if game_state %}<span class="badge" title="le jeu ne répond pas encore">vérification…</span>{% elif update.update_available %}<span class="badge ko">{{ update.latest_version ~ " disponible" if update.latest_version else "màj dispo" }}</span>{% else %}<span class="badge ok">à jour</span>{% endif %}
-          {% if update.changelog_url %}<a href="{{ update.changelog_url }}" target="_blank" rel="noopener">changelog ↗</a>{% endif %}
+          {# Zone RAFRAÎCHIE par le poller (la version disparaît pendant un
+             redémarrage et doit revenir seule) — le bouton de MAJ ci-dessous
+             reste statique, on ne remplace pas un formulaire sous le doigt. #}
+          <span id="vitalsVersion">{{ version_info(update, game_state) }}</span>
+        {% if update is not none %}
           {% if update.update_available %}
           {# La case « forcer » n'existe QUE dans le dialogue de confirmation,
              et seulement quand elle a un sens (joueurs connectés, ou nombre
@@ -238,13 +237,79 @@
         <input type="text" name="until" maxlength="40" placeholder="14h30">
       </label>
       <label>Délai avant fermeture <span class="muted">(minutes, 0 = tout de suite)</span>
-        <input type="number" name="grace_minutes" min="0" max="120" step="1" value="5">
+        <input type="number" name="grace_minutes" min="0" max="1440" step="1" value="5">
+      </label>
+      <label>… ou à heure fixe <span class="muted">(HH:MM ; prioritaire sur le délai)</span>
+        <input type="time" name="at_time">
+      </label>
+      <label class="check-row">
+        <input type="checkbox" name="defer_if_players" value="1">
+        <span>Ne pas exécuter tant que des joueurs sont connectés
+          <span class="muted">— la fermeture attend que le serveur soit vide</span></span>
       </label>
       <div class="dialog-actions">
         <button type="button" class="txtbtn" id="maintenanceCancel">Annuler</button>
         <button class="danger">Fermer le serveur</button>
       </div>
     </form>
+    <div class="po-sep recurring-sep"></div>
+    <details class="sched-maint"{% if scheduled_maintenance %} open{% endif %}>
+      <summary class="sched-maint-title">🔧 Maintenances programmées{% if scheduled_maintenance %} <span class="muted">· {{ scheduled_maintenance|length }}</span>{% endif %}</summary>
+      {% if scheduled_maintenance %}
+      <ul class="sched-list">
+        {% for m in scheduled_maintenance %}
+        <li class="sched-item">
+          <span class="sched-desc">
+            {% if m.kind == "once" %}📅 {{ m.date }} à <b>{{ m.time_hhmm }}</b>
+            {% else %}🔁 {% for d in m.weekdays %}{{ weekday_labels[d] }}{% if not loop.last %} {% endif %}{% endfor %} à <b>{{ m.time_hhmm }}</b>{% endif %}
+            <span class="muted">· préavis {{ m.lead_seconds // 60 }} min{% if m.defer_if_players %} · attend le serveur vide{% endif %}</span>
+          </span>
+          <form method="post" action="/actions/scheduled-maintenance/remove" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="entry_id" value="{{ m.id }}">
+            <button class="txtbtn warn" title="Retirer cette programmation" aria-label="Retirer">✕</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted sched-empty">Aucune maintenance programmée.</p>
+      {% endif %}
+      <form method="post" action="/actions/scheduled-maintenance/add" class="sched-add" id="schedMaintForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="sched-kind">
+          <label><input type="radio" name="kind" value="once" checked> Une date précise</label>
+          <label><input type="radio" name="kind" value="weekly"> Jours de semaine</label>
+        </div>
+        <label class="sched-once">Date
+          <input type="date" name="date">
+        </label>
+        <div class="sched-weekly" hidden>
+          <span class="muted">Jours</span>
+          <div class="weekday-picker">
+            {% for i in range(7) %}
+            <label class="weekday-chip"><input type="checkbox" name="weekdays" value="{{ i }}"><span>{{ weekday_labels[i] }}</span></label>
+            {% endfor %}
+          </div>
+        </div>
+        <span class="recurring-row">
+          <input name="time_hhmm" type="time" value="04:00">
+          <select name="lead_seconds" class="mini-select" title="Préavis in-game">
+            <option value="300" selected>préavis 5 min</option>
+            <option value="600">préavis 10 min</option>
+            <option value="60">préavis 1 min</option>
+          </select>
+          <button class="txtbtn">Ajouter</button>
+        </span>
+        <label>Message affiché aux joueurs <span class="muted">(facultatif)</span>
+          <input type="text" name="message" maxlength="120" placeholder="Maintenance nocturne">
+        </label>
+        <label class="check-row">
+          <input type="checkbox" name="defer_if_players" value="1">
+          <span>Ne pas exécuter tant que des joueurs sont connectés</span>
+        </label>
+      </form>
+    </details>
   </div>
 </dialog>
 <script>
@@ -262,6 +327,21 @@
     if (dialog.close) dialog.close();
     else dialog.removeAttribute("open");
   });
+  // Programmation : bascule « date précise » <-> « jours de semaine ».
+  var schedForm = document.getElementById("schedMaintForm");
+  if (schedForm) {
+    var once = schedForm.querySelector(".sched-once");
+    var weekly = schedForm.querySelector(".sched-weekly");
+    var sync = function () {
+      var isOnce = schedForm.querySelector("input[name='kind']:checked").value === "once";
+      if (once) once.hidden = !isOnce;
+      if (weekly) weekly.hidden = isOnce;
+    };
+    schedForm.querySelectorAll("input[name='kind']").forEach(function (r) {
+      r.addEventListener("change", sync);
+    });
+    sync();
+  }
 })();
 </script>
 {% endif %}
@@ -414,6 +494,11 @@
         <span class="mini restart-delay"><input name="seconds" type="number" min="0" step="5" value="30" required><span>s</span></span>
         <span class="muted delay-hint">0 = immédiat, sans avertissement</span>
       </label>
+      <label class="check-row">
+        <input type="checkbox" name="defer_if_players" value="1">
+        <span>Ne pas exécuter tant que des joueurs sont connectés
+          <span class="muted">— le redémarrage attend que le serveur soit vide</span></span>
+      </label>
       <div class="dialog-actions">
         <button type="button" class="txtbtn" id="restartCancel">Annuler</button>
         <button class="danger">Redémarrer</button>
@@ -424,7 +509,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {% if recurring_restart %}
       <p class="muted">↻ Quotidien actif : tous les jours à <b>{{ recurring_restart.time_hhmm }}</b>
-        (préavis {{ recurring_restart.lead_seconds // 60 }} min).</p>
+        (préavis {{ recurring_restart.lead_seconds // 60 }} min){% if recurring_restart.defer_if_players %} · attend le serveur vide{% endif %}.</p>
       <input type="hidden" name="disable" value="1">
       <button class="txtbtn warn">Désactiver le redémarrage quotidien</button>
       {% else %}
@@ -439,6 +524,11 @@
           </select>
           <button class="txtbtn">Activer</button>
         </span>
+      </label>
+      <label class="check-row">
+        <input type="checkbox" name="defer_if_players" value="1">
+        <span>Ne pas exécuter tant que des joueurs sont connectés
+          <span class="muted">— attend un serveur vide chaque jour</span></span>
       </label>
       {% endif %}
     </form>
@@ -471,7 +561,8 @@
   // les 5 s. Échec réseau silencieux : l'état affiché reste le dernier connu.
   var state = document.getElementById("vitalsState");
   var infra = document.getElementById("vitalsInfra");
-  if (state || infra) {
+  var version = document.getElementById("vitalsVersion");
+  if (state || infra || version) {
     function pollVitals() {
       fetch("/fragments/vitals", { headers: { "X-Requested-With": "fetch" } })
         .then(function (res) { return res.ok ? res.text() : null; })
@@ -481,8 +572,10 @@
           tpl.innerHTML = html;
           var s = tpl.content.querySelector('[data-vitals="state"]');
           var i = tpl.content.querySelector('[data-vitals="infra"]');
+          var v = tpl.content.querySelector('[data-vitals="version"]');
           if (state && s) state.innerHTML = s.innerHTML;
           if (infra && i && i.innerHTML.trim()) infra.innerHTML = i.innerHTML;
+          if (version && v) version.innerHTML = v.innerHTML;
         })
         .catch(function () {})
         .finally(function () { setTimeout(pollVitals, 5000); });

@@ -29,6 +29,7 @@ from .model import (
     ModUpdate,
     OpEntry,
     PendingMaintenance,
+    ScheduledMaintenance,
     PendingOpLevel,
     PendingRestore,
     PendingUnban,
@@ -319,6 +320,7 @@ class PendingMaintenancePort(Protocol):
         motd: str,
         kick: str,
         total_seconds: float,
+        defer_if_players: bool = False,
     ) -> None: ...
     def cancel(self) -> bool: ...
     def status(self) -> PendingMaintenance | None: ...
@@ -349,10 +351,18 @@ class UpdatePort(Protocol):
     ServerUnavailable si les sources de version sont injoignables).
     `apply()` déclenche le conteneur `mc-updater` one-shot — c'est LUI qui porte
     les droits Docker étendus (pull/recreate), jamais mc-admin (CLAUDE.md §8).
+
+    `is_running()`/`exit_code()` permettent de constater l'ISSUE de la mise à
+    jour (le one-shot travaille en asynchrone : sans ça, on ne saurait dire que
+    « lancée »). Même contrat que BackupPort : `is_running()` LÈVE si l'état est
+    illisible — jamais un faux « terminé » — et `exit_code()` renvoie None tant
+    que rien d'exploitable n'est disponible.
     """
 
     def check(self) -> UpdateStatus: ...
     def apply(self) -> None: ...
+    def is_running(self) -> bool: ...
+    def exit_code(self) -> int | None: ...
 
 
 class MetricsPort(Protocol):
@@ -496,7 +506,13 @@ class RestartSchedulerPort(Protocol):
         seuil n'est jamais renvoyé deux fois pour une même programmation).
     """
 
-    def schedule(self, restart_at: datetime, username: str, total_seconds: float) -> None: ...
+    def schedule(
+        self,
+        restart_at: datetime,
+        username: str,
+        total_seconds: float,
+        defer_if_players: bool = False,
+    ) -> None: ...
     def cancel(self) -> bool: ...
     def status(self) -> ScheduledRestart | None: ...
     def take_due_warning(self, now: datetime) -> int | None: ...
@@ -515,6 +531,21 @@ class RecurringRestartPort(Protocol):
     def clear(self) -> None: ...
     def last_fired(self) -> str | None: ...      # "YYYY-MM-DD" ou None
     def mark_fired(self, day: str) -> None: ...
+
+
+class ScheduledMaintenancePort(Protocol):
+    """Liste persistante des maintenances programmées (date précise OU jours de
+    semaine). `list`/`add`/`remove` par les actions utilisateur ;
+    `last_fired`/`mark_fired` par `tick_maintenance` pour n'armer qu'une fois
+    par jour ET par entrée (persisté, survit au redémarrage de mc-admin).
+    `add` attribue et renvoie l'identifiant de l'entrée.
+    """
+
+    def list(self) -> list[ScheduledMaintenance]: ...
+    def add(self, entry: ScheduledMaintenance) -> str: ...
+    def remove(self, entry_id: str) -> bool: ...
+    def last_fired(self, entry_id: str) -> str | None: ...
+    def mark_fired(self, entry_id: str, day: str) -> None: ...
 
 
 class AuditPort(Protocol):

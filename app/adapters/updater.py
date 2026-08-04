@@ -144,3 +144,34 @@ class MinecraftUpdater:
             raise UpdateUnavailable(
                 f"conteneur '{self._name}' non démarrable (créé via `docker compose --profile tools create` ?) : {exc}"
             ) from exc
+
+    def is_running(self) -> bool:
+        """État du one-shot de mise à jour. LÈVE si illisible : un état inconnu
+        ne doit jamais être pris pour un « c'est fini » (même contrat que
+        DockerBackupTrigger)."""
+        try:
+            container = self._get_client().containers.get(self._name)
+            ensure_authorized(getattr(container, "name", self._name), self._name)
+        except UnauthorizedContainer:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise UpdateUnavailable(
+                f"état du conteneur de mise à jour '{self._name}' illisible : {exc}"
+            ) from exc
+        return getattr(container, "status", None) == "running"
+
+    def exit_code(self) -> int | None:
+        """Code de fin du dernier passage. None = tourne encore, ou Docker ne
+        fournit rien d'exploitable — jamais assimilable à un succès."""
+        try:
+            container = self._get_client().containers.get(self._name)
+            ensure_authorized(getattr(container, "name", self._name), self._name)
+        except UnauthorizedContainer:
+            raise
+        except Exception:  # noqa: BLE001 — lecture best-effort
+            return None
+        state = getattr(container, "attrs", {}).get("State") or {}
+        code = state.get("ExitCode")
+        if state.get("Status") == "running" or not isinstance(code, int):
+            return None
+        return code

@@ -20,6 +20,7 @@ from domain.model import (
     UpdateStatus,
     User,
 )
+from domain.services.base import _UPDATE_WATCH_USER
 
 
 def _version_tuple(version: str) -> tuple[int, ...] | None:
@@ -49,6 +50,7 @@ class UpdateMixin:
     def update_status(self, user: User) -> UpdateStatus:
         """Versions actuelle/cible + changelog (lecture, non auditée en succès)."""
         self._authorize(user, Permission.UPDATE)
+        self._scan_update_outcome()
         return self._updater.check()
 
     def apply_update(self, user: User, force: bool = False) -> None:
@@ -62,6 +64,21 @@ class UpdateMixin:
         4. chaque issue est auditée avec le détail des étapes exécutées.
         """
         self._authorize(user, Permission.UPDATE)
+
+        # Garde-fou : pendant une maintenance, le PORTIER occupe l'adresse
+        # statique du serveur. Le `up -d` de mc-updater réclamerait la MÊME IP,
+        # Docker refuserait, et la mise à jour échouerait en laissant le serveur
+        # fermé. On refuse AVANT d'agir — et `force` ne contourne PAS ce refus :
+        # c'est une impossibilité technique, pas un jugement sur le risque.
+        # (`is_running()` renvoie False si aucun portier n'est configuré : une
+        # installation sans maintenance n'est jamais gênée.)
+        if self._doorman is not None and self._doorman.is_running():
+            self._record(user, Permission.UPDATE, "denied",
+                         "bloqué : serveur en maintenance (le portier occupe son adresse)")
+            raise UpdateUnavailable(
+                "Le serveur est en maintenance : rouvre-le avant de lancer la "
+                "mise à jour (le portier occupe son adresse réseau)."
+            )
 
         players_unknown = False
         try:
@@ -87,6 +104,13 @@ class UpdateMixin:
         except ServerUnavailable:
             steps.append("say/save-all sautés (RCON indisponible)")
 
+        # Version d'AVANT, pour pouvoir raconter « 26.1 -> 26.2 » à l'issue.
+        version_before = None
+        try:
+            version_before = self._updater.check().current_version
+        except Exception:  # noqa: BLE001 — best-effort, n'empêche jamais la MAJ
+            pass
+
         try:
             self._updater.apply()
             steps.append("mc-updater démarré")
@@ -94,9 +118,61 @@ class UpdateMixin:
             self._record(user, Permission.UPDATE, "error", "; ".join(steps + [str(exc)]))
             self._notify.notify("Mise à jour échouée", str(exc), "error")
             raise
-        self._record(user, Permission.UPDATE, "allowed", "; ".join(steps))
+        operation_id = f"update::{self._clock.now().isoformat()}"
+        # L'issue est constatée plus tard par `_scan_update_outcome` : le
+        # one-shot travaille en asynchrone (même patron que les sauvegardes).
+        self._update_operation = (operation_id, version_before)
+        self._record(user, Permission.UPDATE, "allowed",
+                     f"phase=update_started requested_by={user.username} "
+                     f"operation_id={operation_id} " + "; ".join(steps))
         self._notify.notify("Mise à jour du serveur lancée", "; ".join(steps),
                             "info", event="update")
+
+    def _scan_update_outcome(self) -> None:
+        """Constate la FIN du one-shot `mc-updater` : notifie et audite l'issue
+        réelle (succès avec la nouvelle version, ou échec avec le code de
+        sortie). Appelé par le polling de la page ET par une tâche de fond —
+        une mise à jour ratée laisse sa trace même si personne ne regarde.
+        Même patron (et mêmes garde-fous) que `_scan_backup_outcomes`."""
+        if self._update_operation is None:
+            return
+        try:
+            if self._updater.is_running():
+                return  # toujours en cours
+        except Exception:  # noqa: BLE001 — état illisible : jamais un faux « fini »
+            return
+        operation_id, version_before = self._update_operation
+        self._update_operation = None
+        code = None
+        try:
+            code = self._updater.exit_code()
+        except Exception:  # noqa: BLE001
+            pass
+        if code is not None and code != 0:
+            self._record(_UPDATE_WATCH_USER, Permission.UPDATE, "error",
+                         f"phase=update_failed exit_code={code} operation_id={operation_id}")
+            self._notify.notify(
+                "Mise à jour du serveur échouée",
+                f"Le conteneur de mise à jour s'est arrêté en erreur (code {code}). "
+                "Le serveur n'a peut-être pas redémarré — vérifie son état.",
+                "error", event="update",
+            )
+            return
+        version_after = None
+        try:
+            version_after = self._updater.check().current_version
+        except Exception:  # noqa: BLE001 — version indisponible : on notifie quand même
+            pass
+        if version_after and version_before and version_after != version_before:
+            detail = f"Le serveur est passé de la version {version_before} à {version_after}."
+        elif version_after:
+            detail = f"Le serveur tourne en version {version_after}."
+        else:
+            detail = "Le serveur a été mis à jour."
+        self._record(_UPDATE_WATCH_USER, Permission.UPDATE, "allowed",
+                     f"phase=update_done version={version_after or '?'} "
+                     f"operation_id={operation_id}")
+        self._notify.notify("Serveur mis à jour", detail, "info", event="update")
 
     # ---- mise à jour de mc-admin LUI-MÊME (bouton MAJ ; barrière UPDATE) ----
 

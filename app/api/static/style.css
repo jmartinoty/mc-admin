@@ -794,12 +794,18 @@ button.chev-toggle:hover { border-color: var(--border); background: var(--surfac
 .archive-entry {
   position: relative;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 18px auto minmax(0, 1fr) auto;
   gap: .65rem;
   align-items: center;
   min-height: 76px;
   padding: .7rem 0;
   border-bottom: 1px solid var(--border-soft);
+}
+.archive-entry-time {
+  align-self: center;
+  min-width: 42px;
+  font-size: .8rem;
+  font-weight: 600;
 }
 .archive-timeline-dot {
   position: relative;
@@ -817,7 +823,6 @@ button.chev-toggle:hover { border-color: var(--border); background: var(--surfac
 .archive-entry-body { min-width: 0; }
 .archive-entry-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .8rem; }
 .archive-entry-head > div { min-width: 0; }
-.archive-entry-head time { flex: none; font-size: .76rem; }
 .archive-entry-meta { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; margin-top: .4rem; }
 .archive-entry-meta .archive-size { font-size: .75rem; }
 .archive-entry-actions { justify-content: flex-end; min-width: 175px; }
@@ -995,6 +1000,22 @@ table.audit td { padding: .65rem .7rem; border-bottom: 1px solid var(--border-so
 .recurring-form p { margin: 0 0 .4rem; font-size: .84rem; }
 .recurring-row { display: flex; gap: .5rem; align-items: center; margin-top: .3rem; }
 .recurring-row input[type="time"] { width: auto; margin: 0; padding: .35rem .45rem; }
+.check-row { display: flex; gap: .5rem; align-items: flex-start; margin-top: .7rem; font-size: .9rem; cursor: pointer; }
+.check-row input[type="checkbox"] { width: auto; margin: .15rem 0 0; flex: none; }
+.sched-maint-title { font-weight: 600; margin: 0; padding: .2rem 0; cursor: pointer; }
+.sched-maint[open] > .sched-maint-title { margin-bottom: .6rem; }
+.sched-list { list-style: none; margin: 0 0 .7rem; padding: 0; display: grid; gap: .35rem; }
+.sched-item { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-size: .9rem; }
+.sched-empty { margin: 0 0 .7rem; }
+.sched-add { display: grid; gap: .55rem; padding-top: .5rem; border-top: 1px dashed var(--border-soft); }
+.sched-kind { display: flex; gap: 1.1rem; font-size: .9rem; }
+.sched-kind label { display: flex; align-items: center; gap: .35rem; cursor: pointer; }
+.sched-once { display: flex; flex-direction: column; gap: .25rem; }
+.weekday-picker { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .3rem; }
+.weekday-chip { cursor: pointer; }
+.weekday-chip input { position: absolute; opacity: 0; width: 0; height: 0; }
+.weekday-chip span { display: inline-block; padding: .25rem .55rem; border: 1px solid var(--border); border-radius: 999px; font-size: .8rem; }
+.weekday-chip input:checked + span { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: .7rem; margin-top: 1rem; }
 
 /* V6.4 : durée en ligne à côté de la pastille (tuile serveur) */
@@ -1061,8 +1082,8 @@ table.audit td { padding: .65rem .7rem; border-bottom: 1px solid var(--border-so
   .player-panel-content { padding-inline: .8rem; }
   .player-panel-section .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .archive-day-head { align-items: flex-start; flex-direction: column; gap: .15rem; }
-  .archive-entry { grid-template-columns: 18px minmax(0, 1fr); }
-  .archive-entry-actions { grid-column: 2; justify-content: flex-start; min-width: 0; }
+  .archive-entry { grid-template-columns: 18px auto minmax(0, 1fr); }
+  .archive-entry-actions { grid-column: 1 / -1; justify-content: flex-start; min-width: 0; }
   .dialog-actions { flex-wrap: wrap; }
   .term-body { height: 240px; }
   .sidebar { gap: .1rem .3rem; }

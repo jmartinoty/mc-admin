@@ -1,6 +1,11 @@
-{# Fragment pollé (UI-3) : pastille serveur + uptime, et liste Infrastructure.
-   Deux racines identifiées — le JS de status.html remplace l'innerHTML des
-   conteneurs correspondants. Rendu 100 % serveur, comme status_body.html. #}
+{# Fragment pollé (UI-3) : pastille serveur + uptime, liste Infrastructure et
+   version du jeu. Racines identifiées — le JS de status.html remplace
+   l'innerHTML des conteneurs correspondants. Rendu 100 % serveur, comme
+   status_body.html. #}
+{% from "_macros.html" import version_info %}
+{% if can_update %}
+<div data-vitals="version">{{ version_info(update, game_state) }}</div>
+{% endif %}
 <div data-vitals="state">
   {% if status %}
   {% if game_state == "starting" %}
