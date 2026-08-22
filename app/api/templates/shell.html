@@ -14,8 +14,6 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Tableau de bord</a>
     <a class="navitem {{ 'active' if active == 'performance' }}" href="/performance"{% if active == 'performance' %} aria-current="page"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 17l5-6 4 3 5-8 4 5"/><path d="M3 21h18"/></svg>Performances</a>
-    <a class="navitem {{ 'active' if active == 'incidents' }}" href="/incidents"{% if active == 'incidents' %} aria-current="page"{% endif %}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L14.7 3.9a2 2 0 00-3.4 0z"/></svg>Incidents</a>
     {% if map_url or can_servers %}
     <a class="navitem {{ 'active' if active == 'map' }}" href="/map"{% if active == 'map' %} aria-current="page"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 4l6 2 6-2v14l-6 2-6-2-6 2V6l6-2z"/><path d="M9 4v14M15 6v14"/></svg>Carte</a>
@@ -30,7 +28,9 @@
     {% endif %}
     <a class="navitem {{ 'active' if active == 'mods' }}" href="/mods"{% if active == 'mods' %} aria-current="page"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/><path d="M12 11L4 6.5M12 11l8-4.5M12 11v9"/></svg>Mods</a>
-    {% if can_backups or can_audit or can_servers %}<div class="nav-group-label">Protéger</div>{% endif %}
+    <div class="nav-group-label">Protéger</div>
+    <a class="navitem {{ 'active' if active == 'watch' }}" href="/watch"{% if active == 'watch' %} aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 4a8.5 8.5 0 018.5 8.5c0 1.8-.5 3.4-1.5 4.8L12 12V4z"/><circle cx="12" cy="12.5" r="8.5"/></svg>Surveillance</a>
     {% if can_backups %}<a class="navitem {{ 'active' if active == 'backups' }}" href="/backups"{% if active == 'backups' %} aria-current="page"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v13m0 0l4-4m-4 4l-4-4"/><path d="M4 17v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>Sauvegardes</a>{% endif %}
     {% if can_audit %}<a class="navitem {{ 'active' if active == 'audit' }}" href="/audit"{% if active == 'audit' %} aria-current="page"{% endif %}>
@@ -38,10 +38,6 @@
     {% if can_servers %}
     <a class="navitem {{ 'active' if active == 'notifications' }}" href="/notifications"{% if active == 'notifications' %} aria-current="page"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>Notifications</a>
-    {% endif %}
-    {% if can_servers %}
-    <a class="navitem {{ 'active' if active == 'watch' }}" href="/watch"{% if active == 'watch' %} aria-current="page"{% endif %}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 4a8.5 8.5 0 018.5 8.5c0 1.8-.5 3.4-1.5 4.8L12 12V4z"/><circle cx="12" cy="12.5" r="8.5"/></svg>Surveillance</a>
     {% endif %}
     {% if can_servers or can_users %}<div class="nav-group-label">Administrer</div>{% endif %}
     {% if can_servers %}

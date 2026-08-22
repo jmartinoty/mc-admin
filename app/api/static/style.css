@@ -1339,3 +1339,7 @@ a.err-code-link:hover { color: var(--accent-strong); border-color: var(--accent)
 }
 /* Le SVG porte un viewBox : il se redimensionne, jamais ne se recadre. */
 .twofa-qr svg { display: block; width: 196px; height: auto; max-width: 100%; }
+
+/* Pastille d'onglet signalant une panne EN COURS : elle doit se distinguer
+   d'un simple décompte. */
+.tab-count.alerte { background: var(--danger); color: #fff; }

@@ -2,8 +2,29 @@
 {% block page %}
 <h1>Surveillance</h1>
 
+{#
+  Deux onglets : ce qui est surveillé en ce moment, et ce qui est tombé par le
+  passé. Ils répondaient à la même question depuis deux pages différentes
+  (retour de Jeremy, 23/08/2026 : « c'est le bordel »).
+
+  ATTENTION AUX BARRIÈRES, elles diffèrent : l'ÉTAT des compagnons et
+  l'historique sont visibles par quiconque a STATUS, mais CHOISIR ce qui est
+  surveillé exige SERVER_MANAGE. Le gabarit masque, le service refuse — la
+  fusion ne doit pas ouvrir la configuration de l'infrastructure à un simple
+  observateur.
+#}
+<div class="pd-body" data-tabs>
+<nav class="tabs" aria-label="Sections de la surveillance">
+  {# Chaque pastille compte ce que son onglet montre : le nombre de services
+     suivis d'un côté, les pannes EN COURS de l'autre. Un badge qui compterait
+     autre chose que son onglet se lirait de travers. #}
+  <a class="tab" href="#surveille">Surveillé{% if watched %} <span class="tab-count">{{ watched | length }}</span>{% endif %}</a>
+  <a class="tab" href="#incidents">Incidents{% if incidents_ouverts %} <span class="tab-count alerte">{{ incidents_ouverts }}</span>{% endif %}</a>
+</nav>
+
+<div class="tab-panel" id="surveille">
 <section class="card">
-  <h2>Conteneurs surveillés</h2>
+  <h2>{{ "Conteneurs surveillés" if can_manage_watch else "État des services" }}</h2>
   <p class="muted rules-hint">Le serveur est toujours surveillé ; ajouter ici
     ses compagnons (tunnel, proxy…). En cas de panne prolongée (3 sondes de
     30 s), une notification part sur les canaux configurés — et le
@@ -32,7 +53,7 @@
             <form method="post" action="/actions/watch/remove">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="name" value="{{ name }}">
-              <button class="txtbtn danger-link">Ne plus surveiller</button>
+              {% if can_manage_watch %}<button class="txtbtn danger-link">Ne plus surveiller</button>{% endif %}
             </form>
           </td>
         </tr>
@@ -47,7 +68,7 @@
 
 <section class="card">
   <h2>Surveiller un conteneur</h2>
-  {% if candidates %}
+  {% if can_manage_watch and candidates %}
   <form method="post" action="/actions/watch/add" class="inline sched-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Conteneur
@@ -66,4 +87,44 @@
   <p class="muted">Aucun autre conteneur détecté sur l'hôte.</p>
   {% endif %}
 </section>
+</div>
+
+<div class="tab-panel" id="incidents">
+<section class="card">
+  <p class="muted rules-hint">Épisodes d'indisponibilité ou de dégradation
+    détectés automatiquement (serveur ou conteneur arrêté, ralentissement
+    soutenu, espace disque bas), avec leur durée et les actions correctives
+    menées pendant chacun.</p>
+
+  {% if incidents %}
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Historique des incidents</caption>
+      <thead><tr><th>Quand</th><th>Sujet</th><th>Type</th><th>Durée</th><th>Interventions</th></tr></thead>
+      <tbody>
+        {% for i in incidents %}
+        <tr>
+          <td>{{ i.started }}</td>
+          <td><b>{{ i.label }}</b>{% if i.detail %}<div class="muted">{{ i.detail }}</div>{% endif %}</td>
+          <td><span class="chip">{{ i.kind }}</span></td>
+          <td>
+            {% if i.ongoing %}<span class="chip error">en cours · {{ i.duration }}</span>
+            {% else %}{{ i.duration }}{% endif %}
+          </td>
+          <td>
+            {% if i.actions %}
+            {% for a in i.actions %}<span class="chip manual">{{ a.when }} {{ a.label }}</span>{% endfor %}
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Aucun incident enregistré. 🎉</p>
+  {% endif %}
+</section>
+</div>
+</div>
 {% endblock %}

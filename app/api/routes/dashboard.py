@@ -835,20 +835,41 @@ def vitals_fragment(request: Request):
 
 @router.get("/watch", response_class=HTMLResponse)
 def watch_page(request: Request):
+    """Surveillance : ce qui est surveillé, et ce qui est tombé (23/08/2026).
+
+    Les deux répondaient à la même question depuis deux pages. ATTENTION aux
+    barrières, qui diffèrent : l'ÉTAT des compagnons et l'historique des
+    incidents sont ouverts à quiconque a STATUS, tandis que CHOISIR ce qui est
+    surveillé exige SERVER_MANAGE. La page s'ouvre donc à tous, mais la
+    configuration n'est ni affichée ni exploitable sans le droit — le service
+    refuserait de toute façon."""
     user = _current(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
     svc = request.app.state.service
+    ctx = _nav_context(request, user, "watch")
     try:
-        watched = svc.watched_containers(user)
-        candidates = svc.watch_candidates(user)
+        states = {st.name: st for st in svc.infra_status(user)}
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    ctx = _nav_context(request, user, "watch")
-    states = {st.name: st for st in svc.infra_status(user)}
-    ctx["watched"] = [(name, states.get(name)) for name in watched]
     ctx["server_state"] = next(iter(states.values()), None)
-    ctx["candidates"] = candidates
+
+    # Configuration : seulement pour qui peut la modifier.
+    ctx["can_manage_watch"] = user.can(Permission.SERVER_MANAGE)
+    ctx["watched"], ctx["candidates"] = [], []
+    if ctx["can_manage_watch"]:
+        try:
+            ctx["watched"] = [(nom, states.get(nom))
+                              for nom in svc.watched_containers(user)]
+            ctx["candidates"] = svc.watch_candidates(user)
+        except (PermissionDenied, DomainError):
+            pass
+    else:
+        # Sans le droit de configurer, on montre quand même l'état de ce qui
+        # tourne : c'est déjà public (carte « Infrastructure » de l'accueil).
+        ctx["watched"] = [(nom, etat) for nom, etat in states.items()]
+
+    ctx.update(_incidents_context(request, user))
     return templates.TemplateResponse(request, "watch.html", ctx)
 
 
@@ -1195,14 +1216,19 @@ def _format_incident_duration(seconds: float) -> str:
 
 @router.get("/incidents", response_class=HTMLResponse)
 def incidents_page(request: Request):
-    user = _current(request)
-    if user is None:
-        return RedirectResponse("/login", status_code=303)
+    # Les incidents ont rejoint la page Surveillance : ils répondaient à la
+    # même question depuis deux endroits. Redirection conservée pour les liens
+    # et les signets existants.
+    return RedirectResponse("/watch#incidents", status_code=303)
+
+
+def _incidents_context(request: Request, user) -> dict:
+    """Historique des incidents, pour l'onglet de la page Surveillance."""
+    ctx: dict = {}
     try:
         raw = request.app.state.service.incidents(user)
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    ctx = _nav_context(request, user, "incidents")
+    except PermissionDenied:
+        return {"incidents": [], "incidents_ouverts": 0}
     now = datetime.now(timezone.utc)
     rows = []
     for incident, actions in raw:
@@ -1226,7 +1252,8 @@ def incidents_page(request: Request):
             ],
         })
     ctx["incidents"] = rows
-    return templates.TemplateResponse(request, "incidents.html", ctx)
+    ctx["incidents_ouverts"] = sum(1 for ligne in rows if ligne["ongoing"])
+    return ctx
 
 
 @router.post("/actions/performance/thresholds")

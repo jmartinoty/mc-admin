@@ -518,11 +518,19 @@ class TestTwoFactor(ApiTestBase):
 
 
 class TestIncidentsPage(ApiTestBase):
-    def test_incidents_page_renders_for_status_user(self):
+    def test_les_incidents_vivent_dans_la_page_surveillance(self):
         self.login("sam", "friend-pw")  # friend a STATUS
-        res = self.client.get("/incidents")
+        res = self.client.get("/watch")
         self.assertEqual(res.status_code, 200)
         self.assertIn("Incidents", res.text)
+        self.assertIn('id="incidents"', res.text)   # l'onglet
+
+    def test_l_ancienne_adresse_redirige(self):
+        """Les liens et signets existants doivent continuer de fonctionner."""
+        self.login("sam", "friend-pw")
+        res = self.client.get("/incidents", follow_redirects=False)
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(res.headers["location"], "/watch#incidents")
 
     def test_incidents_page_requires_login(self):
         self.assertEqual(self.client.get("/incidents").status_code, 303)
@@ -2944,10 +2952,26 @@ class TestWatchPage(ApiTestBase):
                          data={"name": "haxor; rm -rf /", "csrf_token": self.page_csrf()})
         self.assertIn("invalide", self.client.get("/watch").text)
 
-    def test_viewer_403_and_no_sidebar_entry(self):
+    def test_un_observateur_voit_l_etat_mais_pas_la_configuration(self):
+        """La page Surveillance a absorbé les incidents (23/08/2026) et s'ouvre
+        donc à tous — l'état des compagnons et l'historique étaient déjà
+        publics. Mais CHOISIR ce qui est surveillé reste réservé : la fusion
+        ne doit pas avoir ouvert la configuration de l'infrastructure."""
+        self.login("sam", "friend-pw")   # STATUS seulement
+        page = self.client.get("/watch")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Incidents", page.text)              # l'onglet lui reste ouvert
+        self.assertNotIn("watchtower", page.text)          # candidats : non
+        self.assertNotIn("Ne plus surveiller", page.text)  # retrait : non
+        self.assertNotIn("/actions/watch/add", page.text)  # ajout : non
+
+    def test_un_observateur_ne_peut_pas_modifier_la_surveillance(self):
+        """Le gabarit masque, mais c'est le service qui refuse."""
         self.login("sam", "friend-pw")
-        self.assertEqual(self.client.get("/watch").status_code, 403)
-        self.assertNotIn('href="/watch"', self.client.get("/").text)
+        res = self.client.post("/actions/watch/add",
+                               data={"name": "watchtower", "csrf_token": self.page_csrf()})
+        self.assertEqual(res.status_code, 403)
+        self.assertNotIn("watchtower", self.watched.names)
 
     def test_infra_card_on_dashboard_shows_companion_down(self):
         self.companions["playit"]._running = False

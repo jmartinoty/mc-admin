@@ -4,6 +4,19 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.20.0 — 2026-08-23
+
+### Surveillance
+
+- **Les incidents rejoignent la page Surveillance**, en deux onglets : ce qui
+  est suivi en ce moment, et ce qui est tombé par le passé. Ils répondaient à
+  la même question depuis deux pages différentes. Une pastille rouge signale
+  les pannes en cours.
+- La page s'ouvre désormais à tous les comptes : l'état des services était
+  déjà visible depuis l'accueil. **Choisir ce qui est surveillé reste
+  réservé** aux comptes qui gèrent le serveur.
+- L'ancienne adresse des incidents redirige vers le bon onglet.
+
 ## v0.19.0 — 2026-08-23
 
 ### Double authentification
