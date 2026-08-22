@@ -85,11 +85,51 @@ le comportement attendu avant de modifier le code.
   L'historique de développement complet vit sur `nas` et en local.
 - Ne jamais committer `.env`, secrets, données de production ou documentation
   personnelle. `docs/dev-depuis-mac.md` reste volontairement gitignoré.
+- **Identités réelles** : aucun pseudo de joueur ni UUID Minecraft du serveur
+  dans un fichier versionné — fixtures, notes de version et documentation
+  comprises. Employer des pseudos de métiers inventés (Trappeur, Bucheron,
+  Forgeron, Mineur, Berger). `tests/test_identites_privees.py` le vérifie
+  contre `.identites-privees` (racine, NON versionné : l'y publier
+  reviendrait à publier ce qu'il protège) ; le fichier absent, le test est
+  ignoré — il protège donc là où l'on publie, pas ailleurs. Deux fuites
+  l'ont motivé le 22/08/2026 : un vrai UUID resté dans une fixture, et des
+  pseudos employés en exemple dans des notes de version.
 - Avant de pousser, vérifier que le dépôt du TerraMaster est propre :
   `ssh NAS-ts git -C /Volume1/Projects/mc-admin status --short --branch`.
 - Après intégration dans `main`, pousser normalement avec
   `git push nas main`. Ne pas pousser directement une branche de travail en
   production.
+
+### Staging d'abord, production sur demande (acté le 27/07/2026)
+
+**Toute fonctionnalité passe D'ABORD par l'instance de validation
+`mc-admin-staging`** (build git de main, port hôte 3012, données isolées sous
+`/Volume1/AppData/mc-admin-staging` — compose : `docker-compose.staging.yml`,
+URL tailnet : cf. `docs/dev-depuis-mac.md`). **La release de production n'est
+faite QUE sur demande explicite de Jeremy** (« GO prod », « release »…),
+jamais à l'initiative d'un agent — même pour un petit fix, sauf urgence de
+sécurité annoncée comme telle.
+
+1. développement en worktree → tests → merge dans `main` → `git push nas main` ;
+2. déploiement staging (le contexte de build est côté NAS via ssh) :
+
+```bash
+ssh NAS-ts "docker compose -f /Volume1/Projects/mc-admin/docker-compose.staging.yml \
+  --project-directory /Volume1/Projects/mc-admin \
+  --env-file /Volume1/Projects/mc-admin/.env -p mc-admin-staging \
+  up -d --build mc-admin-staging mc-staging-socket-proxy"
+```
+
+3. vérifier healthz (port 3012) + logs, annoncer à Jeremy ce qui est à
+   valider et où ;
+4. après le GO explicite de Jeremy : release (section suivante) — elle peut
+   regrouper PLUSIEURS features validées en staging.
+
+Le serveur de jeu d'ESSAI (`mc-staging-server`, profil `game`) reste éteint
+par défaut ; le démarrer seulement quand la feature à valider a besoin d'un
+serveur en face, et l'éteindre après. Le staging ne touche JAMAIS `minecraft`,
+`mc_playit` ni les données de prod — c'est structurel (réseaux/volumes/noms
+dédiés), le préserver dans toute évolution du compose staging.
 
 ### Déploiement de production
 
@@ -97,7 +137,8 @@ le comportement attendu avant de modifier le code.
 `mc-admin` et les one-shots (mc-restore, mc-op-levels, mc-doorman) tournent
 sur l'image publiée `ghcr.io/jmartinoty/mc-admin:latest`. Plus aucun build
 local, plus de `up -d --build`. **Livrer du code en production = publier une
-release** :
+release — UNIQUEMENT après validation en staging et GO explicite de Jeremy
+(section précédente)** :
 
 1. intégrer et tester sur `main` (suite pytest complète + ruff), pousser `nas` ;
 2. bump `APP_VERSION` (`app/config.py`) + entrée `CHANGELOG.md`, commit

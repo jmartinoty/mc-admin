@@ -8,7 +8,7 @@ import time
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from api import totp
+from api import qr, totp
 from api.auth import authenticate
 from api.routes.common import (
     _csrf,
@@ -589,8 +589,12 @@ def _twofa_context(request: Request, user) -> dict:
     }
     if store is not None and store.has_pending(user.username) and not context["twofa_enabled"]:
         secret = store.secret(user.username) or ""
+        uri = totp.provisioning_uri(secret, user.username)
         context["twofa_secret"] = totp.format_secret(secret)
-        context["twofa_uri"] = totp.provisioning_uri(secret, user.username)
+        context["twofa_uri"] = uri
+        # None si l'URI sort de la norme : la page retombe alors sur la clé à
+        # recopier, jamais sur une image bancale.
+        context["twofa_qr"] = qr.svg(uri)
     return context
 
 

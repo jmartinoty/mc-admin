@@ -79,11 +79,15 @@
 
   {% elif twofa_pending %}
   <ol class="rules-hint muted">
-    <li>Ajouter ce compte dans l'application d'authentification : scanner le QR
-      (si l'application le permet depuis le lien ci-dessous) ou saisir la clé
-      manuellement.</li>
-    <li>Saisir le code à 6 chiffres affiché pour confirmer.</li>
+    <li>Ajouter ce compte dans l'application d'authentification :
+      {% if twofa_qr %}scanner le code ci-dessous, ou saisir la clé à la main.
+      {% else %}saisir la clé ci-dessous à la main.{% endif %}</li>
+    <li>Saisir ensuite le code à 6 chiffres affiché par l'application pour
+      confirmer l'activation.</li>
   </ol>
+  {% if twofa_qr %}
+  <div class="twofa-qr">{{ twofa_qr | safe }}</div>
+  {% endif %}
   <p><b>Clé secrète</b> : <span class="mono">{{ twofa_secret }}</span></p>
   <details class="po-acc">
     <summary class="po-item">Lien otpauth (avancé)</summary>

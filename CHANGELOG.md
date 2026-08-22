@@ -4,6 +4,33 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.19.0 — 2026-08-23
+
+### Double authentification
+
+- **QR code à scanner.** L'activation demandait de recopier à la main une clé
+  de 32 caractères dans son application d'authentification — pénible sur un
+  téléphone, et la page laissait croire qu'un code était affiché alors qu'il
+  n'y en avait jamais eu. Le QR est maintenant généré et affiché ; la clé
+  reste sous lui, pour les applications qui préfèrent la saisie manuelle.
+
+### Comptes
+
+- Les identifiants suivent la **convention Minecraft** : 3 à 16 caractères.
+  La règle ne vaut qu'à la création — un compte plus ancien et plus long
+  continue de se connecter.
+- Le tableau des comptes ne s'étire plus sur toute la largeur de l'écran, et
+  un nom trop long est abrégé plutôt que de bousculer les colonnes voisines.
+
+### Coulisses
+
+- Nouvelle dépendance : `segno`, pour la génération du QR code. Écrire un
+  encodeur à la main demandait de réimplémenter la norme entière — un code
+  qui ressemble à un QR sans se scanner aurait été pire que pas de QR du
+  tout, s'agissant de la seule porte d'entrée de la double authentification.
+- Un contrôle automatique refuse désormais qu'une identité réelle de joueur
+  se retrouve dans les fichiers publiés.
+
 ## v0.18.0 — 2026-08-22
 
 ### Correction importante

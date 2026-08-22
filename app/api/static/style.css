@@ -1327,3 +1327,15 @@ a.err-code-link:hover { color: var(--accent-strong); border-color: var(--accent)
 .account-row { display: flex; gap: .5rem; align-items: center; }
 .account-row input { flex: 1 1 auto; min-width: 0; }
 .account-row button { flex: 0 0 auto; }
+
+/* QR de la double authentification.
+   Le fond blanc est conservé quel que soit le thème : un lecteur ne sait pas
+   lire un code clair sur fond sombre. Aucun rembourrage ni arrondi ici — le
+   blanc visible est EXACTEMENT la zone de silence que la norme impose autour
+   du code (quatre modules), portée par le SVG lui-même. En ajouter donnait
+   un cadre inutilement épais ; en retirer ferait échouer des scans. */
+.twofa-qr {
+  display: inline-block; margin: .8rem 0; line-height: 0;
+}
+/* Le SVG porte un viewBox : il se redimensionne, jamais ne se recadre. */
+.twofa-qr svg { display: block; width: 196px; height: auto; max-width: 100%; }
