@@ -51,6 +51,30 @@ _ACTION_LABELS = {
 # Comptes système (threads de fond) : badge « auto » dans la colonne Qui.
 _SYSTEM_USERS = {"scheduler", "auto-unban", "auto-restore", "scheduled-restart"}
 
+# Faits « en jeu » affichables, et leur libellé de case à cocher. Le tchat est
+# DÉCOCHÉ par défaut (retour de Jeremy, 22/08/2026 : « ça pollue pas mal ») —
+# c'est lui qui noie le journal, 288 lignes sur 420 dans son historique, là où
+# les morts et les succès sont précisément ce qu'on a voulu y voir apparaître.
+_INGAME_KINDS = (
+    ("session", "Connexions", ("join", "leave")),
+    ("command", "Commandes", ("command",)),
+    ("death", "Morts", ("death",)),
+    ("advancement", "Succès", ("advancement",)),
+    ("chat", "Messages", ("chat",)),
+)
+_INGAME_DEFAULT = frozenset({"session", "command", "death", "advancement"})
+
+
+def _ingame_selection(request: Request) -> frozenset[str]:
+    """Cases cochées. Le formulaire envoie toujours `igset` : sans lui (premier
+    affichage, lien externe) on applique le défaut, avec lui on respecte le
+    choix — y compris « toutes décochées », qu'une simple absence de paramètre
+    ne saurait distinguer du défaut."""
+    if not request.query_params.get("igset"):
+        return _INGAME_DEFAULT
+    chosen = set(request.query_params.getlist("ig"))
+    return frozenset(chosen & {key for key, _label, _kinds in _INGAME_KINDS})
+
 _MONTHS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
               "août", "septembre", "octobre", "novembre", "décembre")
 
@@ -348,11 +372,18 @@ def audit_page(request: Request):
     family_counts["all"] = len(entries)
     for e in entries:
         family_counts[_family(e)] += 1
+    selection = _ingame_selection(request)
+    shown_kinds = {kind for key, _label, kinds in _INGAME_KINDS
+                   if key in selection for kind in kinds}
+    ctx["ingame_kinds"] = [(key, label, key in selection)
+                           for key, label, _kinds in _INGAME_KINDS]
     try:
         # Même fenêtre que le journal d'audit (_WINDOW) : depuis l'import de
         # l'historique Nitroserv, 300 ne couvrait plus que l'époque récente.
-        family_counts["ingame"] = len(
-            request.app.state.service.ingame_events(user, limit=_WINDOW)
+        # Comptés APRÈS filtrage : la pastille annonce ce qu'on verra.
+        family_counts["ingame"] = sum(
+            1 for ev in request.app.state.service.ingame_events(user, limit=_WINDOW)
+            if ev[2] in shown_kinds
         )
         family_counts["all"] += family_counts["ingame"]
     except PermissionDenied:
@@ -380,6 +411,7 @@ def audit_page(request: Request):
         game_events = request.app.state.service.ingame_events(
             user, limit=_WINDOW, since=since
         )
+        game_events = [ev for ev in game_events if ev[2] in shown_kinds]
         if since is not None:
             game_events = [ev for ev in game_events if ev[0] >= since]
         if f_q:
@@ -410,17 +442,24 @@ def audit_page(request: Request):
     page = max(1, min(page, total_pages))
     ctx["rows"] = rows[(page - 1) * _PAGE_SIZE:page * _PAGE_SIZE]
     ctx["page"], ctx["total_pages"], ctx["total_entries"] = page, total_pages, total
+    ingame_qs = urlencode([("igset", "1")] + [("ig", key) for key in sorted(selection)])
     ctx["filter_qs"] = urlencode({k: v for k, v in (
         ("user", f_user), ("action", f_action), ("outcome", f_outcome),
         ("q", f_q), ("period", f_period), ("family", f_family),
     ) if v})
+    ctx["filter_qs"] = "&".join(filter(None, (ctx["filter_qs"], ingame_qs)))
     ctx["f_user"], ctx["f_action"], ctx["f_outcome"], ctx["f_q"] = f_user, f_action, f_outcome, f_q
     ctx["f_period"], ctx["f_family"] = f_period, f_family
     # Query string SANS famille : les chips de famille reconstruisent la leur.
-    ctx["family_qs"] = urlencode({k: v for k, v in (
-        ("user", f_user), ("action", f_action), ("outcome", f_outcome),
-        ("q", f_q), ("period", f_period),
-    ) if v})
+    # Les cases « en jeu », elles, sont conservées : changer de famille ne doit
+    # pas faire réapparaître le tchat qu'on vient de décocher.
+    ctx["family_qs"] = "&".join(filter(None, (
+        urlencode({k: v for k, v in (
+            ("user", f_user), ("action", f_action), ("outcome", f_outcome),
+            ("q", f_q), ("period", f_period),
+        ) if v}),
+        ingame_qs,
+    )))
     ctx["filtered"] = filtered
     ctx["human_detail"] = _human_detail
     ctx["action_label"] = lambda action: _ACTION_LABELS.get(action, action)

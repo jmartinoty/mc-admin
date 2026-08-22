@@ -57,6 +57,7 @@ from domain.ports import (
     PendingRestorePort,
     ProfileBackupPort,
     PlayerHistoryPort,
+    GameEventsPort,
     PlayerStatsPort,
     RecurringRestartPort,
     ScheduledMaintenancePort,
@@ -166,6 +167,7 @@ class ServiceCore:
         scheduled_maintenance: ScheduledMaintenancePort | None = None,
         pending_restore: PendingRestorePort | None = None,
         player_stats: PlayerStatsPort | None = None,
+        game_events: GameEventsPort | None = None,
         archive_checks: ArchiveChecksPort | None = None,
         archive_validator: ArchiveValidatorPort | None = None,
         worker_integrity: WorkerIntegrityPort | None = None,
@@ -205,6 +207,10 @@ class ServiceCore:
         self._pending_maintenance = pending_maintenance
         self._pending_restore = pending_restore
         self._player_stats = player_stats
+        # None = suivi des faits de jeu absent (installs anciennes, tests qui
+        # ne le montent pas) : le Journal affiche alors les seuls joins,
+        # leaves et commandes, comme avant.
+        self._game_events = game_events
         self._archive_checks = archive_checks
         self._archive_validator = archive_validator
         self._worker_integrity = worker_integrity

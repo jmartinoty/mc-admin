@@ -31,6 +31,7 @@ from config import (
     build_perf_watcher,
     build_notifications,
     build_password_store,
+    build_game_events,
     build_player_history,
     build_service,
     build_storage_history_watcher,
@@ -75,6 +76,37 @@ def _running_background_tasks(tasks):
                 task.stop()
             except Exception:  # noqa: BLE001 - le nettoyage doit continuer
                 logger.exception("échec de l'arrêt de la tâche %s", name)
+
+
+def _known_players_reader(settings):
+    """Rend un callable donnant l'ensemble des pseudos connus, en minuscules.
+
+    Sert au tailer à trancher « tué par un joueur » vs « tué par une
+    créature » — le message de mort, lui, ne fait aucune différence entre
+    « was slain by Bucheron » et « was slain by Drowned ».
+
+    Deux sources cumulées, lues à chaque appel (les morts sont rares : une
+    centaine en dix mois sur ce serveur, le coût est négligeable) :
+      - `usercache.json` du serveur, qui liste tous les joueurs connectés
+        récemment (le serveur en expire les entrées au bout d'un mois) ;
+      - les sessions déjà enregistrées par mc-admin, qui, elles, ne
+        s'effacent pas et couvrent l'historique importé.
+    """
+    from adapters.player_stats import FilePlayerStats
+
+    stats = (FilePlayerStats(settings.stats_dir, settings.usercache_file,
+                             settings.player_aliases_file)
+             if settings.stats_dir else None)
+
+    def read() -> set[str]:
+        names: set[str] = set()
+        if stats is not None:
+            names.update(st.player.lower() for st in stats.all_stats())
+        names.update(s.player.lower()
+                     for s in build_player_history(settings).summary())
+        return names
+
+    return read
 
 
 def create_app(
@@ -131,6 +163,10 @@ def create_app(
             # Joins/leaves -> canaux configurés ; l'interrupteur « player »
             # (notifications.json, réglé dans l'UI) filtre dans le notifier.
             notifier=build_notifications(settings),
+            # Faits de jeu : même fichier SQLite, instance propre au tailer.
+            game_events=build_game_events(settings),
+            known_players=_known_players_reader(settings),
+            chat_retention_days=settings.chat_retention_days,
         )
     )
     # Alerte serveur/compagnons down (filtrée par l'interrupteur « health »).

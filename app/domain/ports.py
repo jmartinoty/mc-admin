@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
+from .game_events import GameEvent, RecordedEvent
 from .model import (
     AlertThresholds,
     AppRelease,
@@ -455,6 +456,23 @@ class PlayerHistoryPort(Protocol):
     def summary(self) -> list[PlayerSummary]: ...
     def recent_sessions(self, limit: int = 100, since: datetime | None = None) -> list[PlayerSession]: ...
     def recent_commands(self, limit: int = 100, since: datetime | None = None) -> list[tuple[str, datetime, str]]: ...
+
+
+class GameEventsPort(Protocol):
+    """Faits de jeu observés dans `latest.log` : morts, succès, chat (V0.17).
+
+    Même partage des rôles que PlayerHistoryPort : le tailer ÉCRIT sans passer
+    par AdminService (observation passive, pas une action utilisateur), seule
+    la lecture passe par le service et sa barrière AUDIT_VIEW.
+
+    Ce qui est stocké est langue-neutre (clé de message, cause, identifiant
+    d'entité) : la traduction se fait à l'affichage.
+    """
+
+    def record(self, event: GameEvent, at: datetime, killer_type: str = "") -> None: ...
+    def recent(self, limit: int = 100, since: datetime | None = None,
+               kinds: tuple[str, ...] | None = None) -> list[RecordedEvent]: ...
+    def purge_chat(self, before: datetime) -> int: ...
 
 
 class PlayerStatsPort(Protocol):

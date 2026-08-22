@@ -14,7 +14,7 @@ import yaml
 from domain.rbac import build_roles, build_users
 
 # Version affichée dans l'UI et attendue par le tag git de release (vX.Y.Z).
-APP_VERSION = "0.16.0"
+APP_VERSION = "0.17.0"
 # Dépôt public — source des releases pour le bouton MAJ.
 APP_REPO = "jmartinoty/mc-admin"
 
@@ -96,6 +96,7 @@ class Settings:
     storage_history_file: str = "/data/storage_history.json"  # occupation quotidienne des sauvegardes
     storage_history_poll_seconds: float = 3600.0
     alert_thresholds_file: str = "/data/alert_thresholds.json"  # seuils PerfWatcher réglables (UI)
+    chat_retention_days: int = 0  # purge du chat archivé, en jours (0 = jamais)
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "Settings":
@@ -104,11 +105,26 @@ class Settings:
         def flag(name: str, default: str) -> bool:
             return str(env.get(name, default)).strip().lower() in ("1", "true", "yes", "on")
 
+        def positive_int(name: str, default: int) -> int:
+            """Entier >= 0, valeur illisible = défaut : un réglage mal tapé ne
+            doit pas empêcher l'application de démarrer."""
+            try:
+                value = int(str(env.get(name, default)).strip())
+            except (TypeError, ValueError):
+                return default
+            return value if value >= 0 else default
+
         return cls(
             rcon_host=env.get("RCON_HOST", "minecraft"),
             rcon_port=int(env.get("RCON_PORT", "25575")),
             rcon_password=env.get("RCON_PASSWORD", ""),
             session_secret=env.get("SESSION_SECRET", ""),
+            # Purge du chat archivé, en jours. DÉFAUT 0 = conservation sans
+            # limite : choix de Jeremy (22/08/2026), qui veut pouvoir remonter
+            # les messages d'un joueur depuis sa fiche en cas d'insulte, comme
+            # l'historique de modération de Twitch. Les morts et les succès ne
+            # sont de toute façon jamais purgés.
+            chat_retention_days=positive_int("GAME_CHAT_RETENTION_DAYS", 0),
             # Pas de valeur par défaut : une install fraîche SANS cette
             # variable doit démarrer sans serveur (état vide + assistant),
             # pas avec un fantôme « minecraft » sorti de nulle part (constaté
@@ -299,6 +315,16 @@ def build_player_history(settings: Settings):
     from adapters.player_history import SqlitePlayerHistory
 
     return SqlitePlayerHistory(settings.player_history_db)
+
+
+def build_game_events(settings: Settings):
+    """Adapter GameEventsPort (SQLite, même base que l'historique joueurs).
+    Comme build_player_history : aucune connexion gardée entre les appels,
+    donc plusieurs instances sur le même fichier (service + tailer) sont sans
+    risque."""
+    from adapters.game_events import SqliteGameEvents
+
+    return SqliteGameEvents(settings.player_history_db)
 
 
 def build_temp_bans(settings: Settings):
@@ -641,6 +667,7 @@ def build_service(settings: Settings):
         player_stats=(FilePlayerStats(settings.stats_dir, settings.usercache_file,
                                       settings.player_aliases_file)
                       if settings.stats_dir else None),
+        game_events=build_game_events(settings),
         archive_checks=JsonArchiveChecks(settings.archive_checks_file),
         archive_validator=FileArchiveValidator(backup_archives),
         worker_integrity=worker_integrity,

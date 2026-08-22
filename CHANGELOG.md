@@ -4,6 +4,43 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.17.0 — 2026-08-22
+
+### Suivi des faits de jeu (nouveau)
+
+Le serveur écrivait déjà tout dans ses journaux ; mc-admin sait maintenant les
+lire, les garder et vous les montrer.
+
+- **Qui a tué qui.** Chaque mort est enregistrée avec sa cause et son auteur,
+  et les duels entre joueurs sont distingués des créatures : « FrenchEmperor02
+  a été tué par antogui » ne se lit pas comme « tué par un Noyé ». La page
+  Joueurs gagne un **tableau des duels**.
+- **Fiche joueur enrichie** : morts observées, duels gagnés, cause de mort la
+  plus fréquente et **bête noire** — celle qui vous tue le plus, joueur ou
+  créature confondus.
+- **Succès et messages** rejoignent aussi le Journal, dans sa famille
+  « En jeu », avec de **nouvelles cases à cocher** pour choisir ce qu'on
+  affiche. Les messages sont masqués par défaut : ce sont eux qui noient le
+  reste.
+- **Historique des messages d'un joueur**, sur sa fiche, réservé aux comptes
+  pouvant sanctionner : de quoi vérifier un signalement avant d'agir.
+- Un script d'import (`scripts/import_game_events.py`) rejoue vos anciennes
+  archives de journaux, pour que le suivi ne commence pas à zéro. Il peut être
+  relancé sans jamais dupliquer l'historique.
+- Les messages écrits en jeu sont conservés sans limite de temps. Un réglage
+  (`GAME_CHAT_RETENTION_DAYS`) permet de les purger au-delà d'un certain âge ;
+  morts et succès, eux, ne sont jamais effacés.
+
+### Fiche joueur
+
+- La fiche complète s'organise en **onglets** — Vue d'ensemble, Faits de jeu,
+  Messages, Sessions — au lieu d'une page à rallonge. L'onglet ouvert reste
+  dans l'adresse, donc partageable.
+- Le **volet latéral** donne désormais un aperçu (3 derniers messages, 3
+  dernières sessions) avec le total et un lien vers la fiche complète.
+- Les longues listes défilent dans leur propre cadre plutôt que d'étirer la
+  page.
+
 ## v0.16.0 — 2026-08-04
 
 ### Maintenance et redémarrages

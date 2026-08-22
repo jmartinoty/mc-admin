@@ -1,3 +1,35 @@
+{#
+  Fiche joueur, partagée par la PAGE complète et le VOLET latéral.
+
+  Deux mises en forme pour un même contenu (retour de Jeremy, 22/08/2026) :
+  - volet (`panel_mode`) : un APERÇU — les 3 derniers messages, les 3 dernières
+    sessions, chaque fois avec le total et un lien vers la fiche complète ;
+  - page : des ONGLETS, parce que les quatre sections répondent à quatre
+    usages distincts (statistiques, faits de jeu, modération, présence) et
+    qu'empilées elles obligent à faire défiler 125 messages pour atteindre les
+    sessions.
+
+  Sans JavaScript, les onglets restent des ancres et TOUS les panneaux
+  s'affichent empilés : c'est le script qui masque, jamais le gabarit.
+#}
+{% set aperçu = 3 %}
+{% set messages_total = game_record.messages if game_record else (player_messages | length) %}
+{% if summary or stats or game_record or player_messages %}
+
+{% if not panel_mode %}
+<nav class="pd-tabs" aria-label="Sections de la fiche de {{ player_name }}">
+  <a class="pd-tab" href="#pd-apercu">Vue d'ensemble</a>
+  {% if game_record and (game_record.deaths or game_record.kills or game_record.advancements) %}
+  <a class="pd-tab" href="#pd-jeu">Faits de jeu</a>
+  {% endif %}
+  {% if player_messages %}
+  <a class="pd-tab" href="#pd-messages">Messages <span class="pd-tab-count">{{ messages_total }}</span></a>
+  {% endif %}
+  <a class="pd-tab" href="#pd-sessions">Sessions <span class="pd-tab-count">{{ sessions | length }}</span></a>
+</nav>
+{% endif %}
+
+<div class="pd-panel" id="pd-apercu">
 {% if summary or stats %}
 <section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
   <div class="metrics player-metrics">
@@ -25,6 +57,7 @@
     </div>
   </div>
 </section>
+{% endif %}
 
 {% if stats %}
 <section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
@@ -41,16 +74,74 @@
   </div>
 </section>
 {% endif %}
+</div>
 
+{% if game_record and (game_record.deaths or game_record.kills or game_record.advancements) %}
+<div class="pd-panel" id="pd-jeu">
 <section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
-  <h2>Sessions</h2>
+  <h2>Faits de jeu {% if not panel_mode %}<span class="bc-sub">observés par le Journal, datés à la ligne près</span>{% endif %}</h2>
+  {% if panel_mode %}<p class="section-hint">Observés par le Journal, datés à la ligne près.</p>{% endif %}
+  <div class="metrics player-stats">
+    <div class="metric"><div class="metric-value">{{ game_record.deaths }}</div><div class="metric-label">Morts observées</div></div>
+    <div class="metric"><div class="metric-value">{{ game_record.kills }}</div><div class="metric-label">Duels gagnés</div></div>
+    <div class="metric">
+      <div class="metric-value">{% if game_record.top_cause %}{{ game_record.top_cause[1] }}{% else %}–{% endif %}</div>
+      <div class="metric-label">{% if game_record.top_cause %}{{ game_record.top_cause[0] | cause_label }}{% else %}Cause principale{% endif %}</div>
+    </div>
+    <div class="metric">
+      {% set nemesis = game_record.nemesis %}
+      <div class="metric-value pd-nemesis">
+        {%- if nemesis and nemesis[0] == 'player' -%}{{ nemesis[2] }}
+        {%- elif nemesis -%}{{ (nemesis[1], nemesis[2]) | mob_label }}
+        {%- else -%}–{%- endif -%}
+      </div>
+      <div class="metric-label">Bête noire{% if nemesis %} ({{ nemesis[3] }}×){% endif %}</div>
+    </div>
+  </div>
+  {% if game_record.victims %}
+  <p class="section-hint">Victimes : {% for name, count in game_record.victims %}{{ name }}{% if count > 1 %} ({{ count }}×){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+  {% endif %}
+</section>
+</div>
+{% endif %}
+
+{% if player_messages %}
+<div class="pd-panel" id="pd-messages">
+<section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
+  <h2>Messages
+    {%- if not panel_mode %} <span class="bc-sub">{{ messages_total }} message{{ "s" if messages_total > 1 }} écrit{{ "s" if messages_total > 1 }} en jeu</span>{% endif %}
+  </h2>
+  <p class="section-hint">Visible par les comptes pouvant sanctionner — à consulter pour vérifier un signalement.</p>
+  <div class="table-wrap {{ '' if panel_mode else 'pd-scroll' }}">
+    <table class="table">
+      <thead><tr><th>Quand</th><th>Message</th></tr></thead>
+      <tbody>
+        {% for message in (player_messages[:aperçu] if panel_mode else player_messages) %}
+        <tr>
+          <td class="tnum muted">{{ message.at.astimezone().strftime("%d/%m/%Y %H:%M") }}</td>
+          <td>{{ message.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if panel_mode and messages_total > aperçu %}
+  <p class="section-hint"><a href="/players/{{ player_name }}#pd-messages">Voir les {{ messages_total }} messages</a></p>
+  {% endif %}
+</section>
+</div>
+{% endif %}
+
+<div class="pd-panel" id="pd-sessions">
+<section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
+  <h2>Sessions{% if not panel_mode and sessions %} <span class="bc-sub">{{ sessions | length }} enregistrée{{ "s" if sessions | length > 1 }}</span>{% endif %}</h2>
   {% if sessions %}
-  <div class="table-wrap">
+  <div class="table-wrap {{ '' if panel_mode else 'pd-scroll' }}">
     <table class="audit">
       <caption class="sr-only">Sessions récentes de {{ player_name }}</caption>
       <thead><tr><th>Connexion</th><th>Déconnexion</th><th>Durée</th></tr></thead>
       <tbody>
-        {% for s in sessions %}
+        {% for s in (sessions[:aperçu] if panel_mode else sessions) %}
         <tr>
           <td class="tnum">{{ s.joined_at.astimezone().strftime("%d/%m/%Y %H:%M") }}</td>
           <td class="tnum">{% if s.left_at %}{{ s.left_at.astimezone().strftime("%d/%m/%Y %H:%M") }}{% else %}<span class="pill ok pill-sm"><span class="led"></span>en cours</span>{% endif %}</td>
@@ -65,10 +156,15 @@
       </tbody>
     </table>
   </div>
+  {% if panel_mode and sessions | length > aperçu %}
+  <p class="section-hint"><a href="/players/{{ player_name }}#pd-sessions">Voir les {{ sessions | length }} sessions</a></p>
+  {% endif %}
   {% else %}
   <p class="muted">Aucune session enregistrée pour ce joueur.</p>
   {% endif %}
 </section>
+</div>
+
 {% else %}
 <section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
   <p class="muted">Aucune donnée pour {{ player_name }} : jamais vu sur ce serveur.</p>

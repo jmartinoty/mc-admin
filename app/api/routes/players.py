@@ -94,8 +94,24 @@ def _player_detail_context(request: Request, user, player_name: str) -> dict:
         pass
 
     ctx = _nav_context(request, user, "players")
+    # Faits de jeu observés par le Journal. Best-effort : une install sans
+    # suivi (ou une base neuve) affiche la fiche comme avant.
+    game_record = None
+    messages = []
+    try:
+        game_record = svc.player_game_record(user, player_name)
+    except (PermissionDenied, DomainError):
+        pass
+    if user.can(Permission.BAN_MANAGE):
+        try:
+            messages = svc.player_messages(user, player_name, limit=200)
+        except (PermissionDenied, DomainError):
+            messages = []
+
     ctx.update({
         "player_name": player_name,
+        "game_record": game_record,
+        "player_messages": messages,
         "page_title": f"{player_name} · Joueurs",
         "summary": summary,
         "sessions": sessions,
@@ -231,6 +247,12 @@ def players_page(request: Request):
     except DomainError:
         pass
     ctx["stats_by_key"] = stats_by_key
+    # Duels observés par le Journal (« qui a tué qui »). Best-effort : absent
+    # tant qu'aucun duel n'a eu lieu, ou sur une install sans suivi.
+    try:
+        ctx["pvp_pairs"] = svc.pvp_pairs(user, limit=20)
+    except DomainError:
+        ctx["pvp_pairs"] = []
     ctx["players"], ctx["history_names"] = _merge_known_players(players, known_names, online_names)
     return templates.TemplateResponse(request, "players.html", ctx)
 

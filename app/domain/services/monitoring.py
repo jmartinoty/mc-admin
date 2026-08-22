@@ -11,6 +11,7 @@ from domain.errors import (
     InvalidGameValue,
     ServerUnavailable,
 )
+from domain.game_events_fr import describe
 from domain.model import (
     AlertThresholds,
     AuditEntry,
@@ -191,6 +192,38 @@ class MonitoringMixin:
             stats = next((st for st in self._player_stats.all_stats() if st.player.lower() == key), None)
         return summary, sessions, stats
 
+    def player_game_record(self, user: User, player_name: str):
+        """Bilan des faits de jeu d'un joueur (morts, duels, bête noire…),
+        observé par le Journal. Barrière STATUS, comme le reste de sa fiche :
+        c'est de la statistique de jeu, pas de la modération."""
+        self._authorize(user, Permission.STATUS)
+        self._validate_player_name(player_name)
+        if self._game_events is None:
+            return None
+        return self._game_events.player_record(player_name)
+
+    def player_messages(self, user: User, player_name: str, limit: int = 50):
+        """Messages écrits par un joueur, plus récents d'abord.
+
+        Barrière plus haute que le reste de la fiche — BAN_MANAGE — car ce
+        n'est pas une statistique mais la conversation de quelqu'un. Ces
+        messages sont là pour vérifier un signalement avant de sanctionner
+        (demande de Jeremy, 22/08/2026, « un peu comme sur Twitch en cas
+        d'insulte ») : les lire est donc un geste de modération, réservé à qui
+        peut sanctionner."""
+        self._authorize(user, Permission.BAN_MANAGE)
+        self._validate_player_name(player_name)
+        if self._game_events is None:
+            return []
+        return self._game_events.for_player(player_name, limit=limit, kinds=("chat",))
+
+    def pvp_pairs(self, user: User, limit: int = 50):
+        """(tueur, victime, nombre) pour le tableau des duels. Barrière STATUS."""
+        self._authorize(user, Permission.STATUS)
+        if self._game_events is None:
+            return []
+        return self._game_events.pvp_pairs(limit)
+
     def ingame_events(
         self,
         user: User,
@@ -198,7 +231,8 @@ class MonitoringMixin:
         since: datetime | None = None,
     ) -> list[tuple]:
         """Événements en jeu pour le Journal (connexions, déconnexions,
-        commandes des joueurs) : (horodatage, joueur, genre, texte), plus
+        commandes des joueurs, morts, succès, chat) : (horodatage, joueur,
+        genre, texte), plus
         récent d'abord. Même barrière que le journal (AUDIT_VIEW).
         `since` descend jusqu'au SQL — depuis l'import de l'historique
         Nitroserv, tronquer AVANT de filtrer masquerait les périodes
@@ -213,6 +247,12 @@ class MonitoringMixin:
                                f"s'est déconnecté (session de {minutes} min)"))
         for player, at, command in self._player_history.recent_commands(limit, since=since):
             events.append((at, player, "command", f"commande : {command}"))
+        # Faits de jeu (morts, succès, chat). Traduits ICI et pas en base : ce
+        # qui est stocké reste langue-neutre, cf. domain/game_events_fr.py.
+        if self._game_events is not None:
+            for recorded in self._game_events.recent(limit, since=since):
+                events.append((recorded.at, recorded.player, recorded.kind,
+                               describe(recorded, recorded.killer_is_player)))
         events.sort(key=lambda ev: ev[0], reverse=True)
         return events[:limit]
 

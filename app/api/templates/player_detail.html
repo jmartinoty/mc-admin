@@ -25,5 +25,55 @@
 </div>
 
 {% set panel_mode = false %}
+<div class="pd-body">
 {% include "partials/player_detail_sections.html" %}
+</div>
+
+<script>
+// Onglets de la fiche joueur. AMÉLIORATION PROGRESSIVE : le gabarit rend tous
+// les panneaux visibles ; ce script n'entre en jeu que s'il s'exécute, en
+// posant `.pd-tabbed` puis en masquant les inactifs. Sans lui (ou s'il
+// échoue), la fiche reste entièrement lisible, empilée.
+(function () {
+  var body = document.querySelector(".pd-body");
+  if (!body) return;
+  var tabs = Array.prototype.slice.call(body.querySelectorAll(".pd-tab"));
+  var panels = Array.prototype.slice.call(body.querySelectorAll(".pd-panel"));
+  if (tabs.length < 2 || !panels.length) return;  // un seul onglet : inutile
+
+  function show(id, push) {
+    var found = false;
+    panels.forEach(function (panel) {
+      var active = panel.id === id;
+      panel.hidden = !active;
+      if (active) found = true;
+    });
+    if (!found) return false;
+    tabs.forEach(function (tab) {
+      var active = tab.getAttribute("href") === "#" + id;
+      if (active) { tab.setAttribute("aria-current", "page"); }
+      else { tab.removeAttribute("aria-current"); }
+    });
+    // L'onglet vit dans l'URL : la page est partageable et rechargeable.
+    if (push && window.history && window.history.replaceState) {
+      window.history.replaceState(null, "", "#" + id);
+    }
+    return true;
+  }
+
+  body.classList.add("pd-tabbed");
+  tabs.forEach(function (tab) {
+    tab.addEventListener("click", function (event) {
+      var id = tab.getAttribute("href").slice(1);
+      if (show(id, true)) event.preventDefault();
+    });
+  });
+  // Ancre d'arrivée (lien « Voir les 125 messages » du volet), sinon le premier.
+  var wanted = (window.location.hash || "").slice(1);
+  if (!wanted || !show(wanted, false)) show(panels[0].id, false);
+  window.addEventListener("hashchange", function () {
+    show((window.location.hash || "").slice(1), false);
+  });
+})();
+</script>
 {% endblock %}

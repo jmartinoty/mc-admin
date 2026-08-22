@@ -277,6 +277,26 @@
   {% endif %}
 </section>
 
+{% if pvp_pairs %}
+<section class="card">
+  <h2>Duels <span class="bc-sub">qui a tué qui, d'après le Journal</span></h2>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Vainqueur</th><th>Victime</th><th class="tnum">Fois</th></tr></thead>
+      <tbody>
+        {% for killer, victim, count in pvp_pairs %}
+        <tr>
+          <td><a href="/players/{{ killer }}">{{ killer }}</a></td>
+          <td><a href="/players/{{ victim }}">{{ victim }}</a></td>
+          <td class="tnum">{{ count }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
 <dialog class="player-drawer" id="playerDrawer" aria-labelledby="playerDrawerTitle">
   <div class="player-drawer-frame">
     <div class="player-drawer-topbar">

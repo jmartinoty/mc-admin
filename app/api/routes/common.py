@@ -62,6 +62,16 @@ from api.release_notes import render_release_notes  # noqa: E402 — après l'en
 
 templates.env.filters["release_notes"] = render_release_notes
 
+# Faits de jeu : la base ne stocke que des identifiants (cf.
+# domain/game_events.py), la langue vit dans un dictionnaire à part. Ces deux
+# filtres sont le point de traduction pour les gabarits — le jour d'une version
+# anglaise, c'est ici qu'on choisira le dictionnaire.
+from domain.game_events_fr import cause_label as _cause_label  # noqa: E402
+from domain.game_events_fr import mob_name as _mob_name  # noqa: E402
+
+templates.env.filters["cause_label"] = _cause_label
+templates.env.filters["mob_label"] = lambda nemesis: _mob_name(nemesis[0], nemesis[1])
+
 
 # Guide public des messages et codes (dépôt public). Un code "JEU-90" pointe
 # vers l'ancre GitHub "#jeu-90" du fichier docs/codes.md (les titres ### de ce

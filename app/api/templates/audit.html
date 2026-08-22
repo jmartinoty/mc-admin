@@ -38,6 +38,18 @@
          aria-label="Rechercher dans les détails" autocomplete="off">
   <button id="auditFilterBtn">Filtrer</button>
   {% if filtered %}<a class="txtbtn reset-link" href="/audit">réinitialiser</a>{% endif %}
+  {# Faits « en jeu » : le tchat est décoché par défaut, c'est lui qui noie le
+     journal. `igset` distingue « rien de coché » de « pas encore choisi ». #}
+  <input type="hidden" name="igset" value="1">
+  <fieldset class="ingame-picker">
+    <legend>En jeu</legend>
+    {% for key, label, checked in ingame_kinds %}
+    <label class="ingame-check">
+      <input type="checkbox" name="ig" value="{{ key }}" {% if checked %}checked{% endif %}>
+      <span>{{ label }}</span>
+    </label>
+    {% endfor %}
+  </fieldset>
 </form>
 
 <section class="card">
@@ -169,15 +181,20 @@
 {% block page_scripts %}
 <script>
 (function () {
-  // Filtres auto-appliqués : selects au changement, texte après une pause de
-  // frappe. Le bouton « Filtrer » ne sert qu'en secours sans JavaScript.
+  // Filtres auto-appliqués : listes et CASES au changement, texte après une
+  // pause de frappe. Le bouton « Filtrer » ne sert qu'en secours sans
+  // JavaScript — il est masqué ici, d'où l'importance de câbler CHAQUE
+  // contrôle : une case oubliée ne fait alors plus rien du tout.
   var form = document.getElementById("auditFilters");
   if (!form) return;
   var btn = document.getElementById("auditFilterBtn");
   if (btn) btn.style.display = "none";
-  Array.prototype.forEach.call(form.querySelectorAll("select"), function (sel) {
-    sel.addEventListener("change", function () { window.mc.submitForm(form); });
-  });
+  Array.prototype.forEach.call(
+    form.querySelectorAll("select, input[type='checkbox']"),
+    function (control) {
+      control.addEventListener("change", function () { window.mc.submitForm(form); });
+    }
+  );
   var q = form.querySelector("input[name='q']");
   var timer = null;
   q.addEventListener("input", function () {

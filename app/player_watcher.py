@@ -1,5 +1,9 @@
 """Suivi des joueurs en tâche de fond : tail de `latest.log` (V3.4).
 
+Depuis la V0.17 il capte AUSSI les faits de jeu (morts, succès, chat) via
+`domain.game_events`. Un seul tailer pour tout : ouvrir un second lecteur sur
+le même fichier dupliquerait l'I/O et la gestion de position, pour rien.
+
 Détecte les « X joined the game » / « X left the game » dès qu'ils surviennent
 (pas seulement au polling status) et les écrit DIRECTEMENT dans
 PlayerHistoryPort — PAS via AdminService : ce n'est pas une action utilisateur
@@ -15,7 +19,9 @@ from __future__ import annotations
 
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+from domain.game_events import parse_line
 
 _JOIN_RE = re.compile(r"(\w{3,16}) joined the game")
 _LEAVE_RE = re.compile(r"(\w{3,16}) left the game")
@@ -33,7 +39,9 @@ NOTIFY_COOLDOWN_SECONDS = 15 * 60
 
 class PlayerLogWatcher:
     def __init__(self, log_path: str, history, poll_interval: float = 2.0, clock=None, notifier=None,
-                 notify_cooldown_seconds: float = NOTIFY_COOLDOWN_SECONDS) -> None:
+                 notify_cooldown_seconds: float = NOTIFY_COOLDOWN_SECONDS,
+                 game_events=None, known_players=None,
+                 chat_retention_days: int = 0) -> None:
         self._path = log_path
         self._history = history
         self._poll_interval = poll_interval
@@ -44,6 +52,18 @@ class PlayerLogWatcher:
         self._notifier = notifier
         self._notify_cooldown = notify_cooldown_seconds
         self._last_notified: dict[str, datetime] = {}
+        # Faits de jeu (GameEventsPort). None = désactivé : le tailer garde
+        # exactement le comportement d'avant, joins/leaves/commandes.
+        self._game_events = game_events
+        # Rend l'ensemble des pseudos connus (minuscules) : c'est LUI qui
+        # tranche « tué par un joueur » vs « tué par une créature », le
+        # parseur ne voyant qu'un nom. Source côté app : usercache du serveur
+        # + joueurs déjà vus. Limite assumée : un joueur totalement inconnu
+        # (jamais connecté, absent du usercache) serait pris pour une
+        # créature — la ligne brute est conservée en base, donc rattrapable.
+        self._known_players = known_players
+        self._chat_retention_days = chat_retention_days
+        self._last_purge: datetime | None = None
         self._stop = threading.Event()
         # Position initiale prise (fin de fichier) : les écritures POSTÉRIEURES
         # sont garanties vues. Les tests attendent cet événement avant d'écrire
@@ -67,6 +87,7 @@ class PlayerLogWatcher:
         self.ready.set()
         while not self._stop.is_set():
             position = self._consume_new_lines(position)
+            self._purge_chat_if_due()
             if self._stop.wait(self._poll_interval):
                 break
 
@@ -109,6 +130,47 @@ class PlayerLogWatcher:
         elif match := _CMD_RE.search(line):
             # Jamais notifié (bruit) : consultable dans le Journal, famille « En jeu ».
             self._history.record_command(match.group(1), match.group(2).strip(), self._clock())
+        elif self._game_events is not None:
+            self._record_game_event(line)
+
+    def _record_game_event(self, line: str) -> None:
+        """Morts, succès et chat. Jamais notifié (choix de Jeremy 22/08/2026 :
+        le suivi se consulte, il ne sonne pas) — et JAMAIS bloquant : une
+        écriture qui échoue ne doit pas tuer le tailer, dont la mission
+        première reste les connexions."""
+        event = parse_line(line)
+        if event is None:
+            return
+        killer_type = ""
+        if event.kind == "death" and event.killer:
+            killer_type = "player" if self._is_player(event.killer) else "mob"
+        try:
+            self._game_events.record(event, self._clock(), killer_type)
+        except Exception:  # noqa: BLE001 - le tailer survit à tout
+            pass
+
+    def _is_player(self, name: str) -> bool:
+        if self._known_players is None:
+            return False
+        try:
+            return name.lower() in self._known_players()
+        except Exception:  # noqa: BLE001 - source indisponible = créature
+            return False
+
+    def _purge_chat_if_due(self) -> None:
+        """Rétention du chat : une passe par jour suffit (choix de conception —
+        les messages sont de la conversation entre joueurs, pas des faits de
+        jeu, cf. GAME_CHAT_RETENTION_DAYS). 0 = conservation illimitée."""
+        if self._game_events is None or self._chat_retention_days <= 0:
+            return
+        now = self._clock()
+        if self._last_purge is not None and (now - self._last_purge) < timedelta(days=1):
+            return
+        self._last_purge = now
+        try:
+            self._game_events.purge_chat(now - timedelta(days=self._chat_retention_days))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _may_notify(self, player: str, now: datetime) -> bool:
         """Fenêtre anti-spam par joueur : True au plus une fois par cooldown."""
