@@ -694,7 +694,7 @@ def action_map_test(request: Request, map_url: str = Form(""), csrf_token: str =
         ok, detail = request.app.state.service.test_map_url(user, map_url)
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    request.session["flash"] = (f"Test réussi : {detail} — tu peux activer la carte."
+    request.session["flash"] = (f"Test réussi : {detail} — la carte peut être activée."
                                 if ok else f"Test : {detail}")
     return RedirectResponse(f"/map?draft={urllib.parse.quote(map_url.strip())}", status_code=303)
 
@@ -951,11 +951,11 @@ def _explain_channel_error(exc: Exception) -> str:
         except Exception:  # noqa: BLE001
             pass
         if "can't send messages to the bot" in body:
-            return ("le chat ID renseigné est celui du bot lui-même. Il faut TON identifiant "
-                    "(un nombre) : envoie /start au bot, puis récupère ton ID via @userinfobot.")
+            return ("le chat ID renseigné est celui du bot lui-même. Il faut l'identifiant "
+                    "(un nombre) : envoyer /start au bot, puis récupérer l'ID via @userinfobot.")
         if "chat not found" in body:
-            return ("chat ID introuvable : envoie d'abord /start au bot (obligatoire pour "
-                    "qu'il puisse t'écrire), puis vérifie l'ID via @userinfobot.")
+            return ("chat ID introuvable : envoyer d'abord /start au bot (obligatoire pour "
+                    "qu'il puisse écrire), puis vérifier l'ID via @userinfobot.")
         if exc.code in (401, 404):
             return "jeton ou webhook invalide (l'API répond " + str(exc.code) + ")."
         return f"HTTP {exc.code} — {body[:120]}"
@@ -1021,7 +1021,7 @@ def action_detect_chats(request: Request, bot_token: str = Form(""), csrf_token:
     except Exception:  # noqa: BLE001 — réseau : message honnête, pas de 500
         return JSONResponse({"error": "Échec : Telegram injoignable depuis le serveur."})
     if not chats:
-        return JSONResponse({"error": "Aucun chat vu par ce bot — envoie /start au bot "
+        return JSONResponse({"error": "Aucun chat vu par ce bot — envoyer /start au bot "
                                       "(ou ajoute-le au groupe) puis re-clique."})
     return JSONResponse({"chats": chats})
 

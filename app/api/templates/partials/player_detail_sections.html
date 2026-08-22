@@ -17,19 +17,19 @@
 {% if summary or stats or game_record or player_messages %}
 
 {% if not panel_mode %}
-<nav class="pd-tabs" aria-label="Sections de la fiche de {{ player_name }}">
-  <a class="pd-tab" href="#pd-apercu">Vue d'ensemble</a>
+<nav class="tabs" aria-label="Sections de la fiche de {{ player_name }}">
+  <a class="tab" href="#pd-apercu">Vue d'ensemble</a>
   {% if game_record and (game_record.deaths or game_record.kills or game_record.advancements) %}
-  <a class="pd-tab" href="#pd-jeu">Faits de jeu</a>
+  <a class="tab" href="#pd-jeu">Faits de jeu</a>
   {% endif %}
   {% if player_messages %}
-  <a class="pd-tab" href="#pd-messages">Messages <span class="pd-tab-count">{{ messages_total }}</span></a>
+  <a class="tab" href="#pd-messages">Messages <span class="tab-count">{{ messages_total }}</span></a>
   {% endif %}
-  <a class="pd-tab" href="#pd-sessions">Sessions <span class="pd-tab-count">{{ sessions | length }}</span></a>
+  <a class="tab" href="#pd-sessions">Sessions <span class="tab-count">{{ sessions | length }}</span></a>
 </nav>
 {% endif %}
 
-<div class="pd-panel" id="pd-apercu">
+<div class="tab-panel" id="pd-apercu">
 {% if summary or stats %}
 <section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
   <div class="metrics player-metrics">
@@ -77,7 +77,7 @@
 </div>
 
 {% if game_record and (game_record.deaths or game_record.kills or game_record.advancements) %}
-<div class="pd-panel" id="pd-jeu">
+<div class="tab-panel" id="pd-jeu">
 <section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
   <h2>Faits de jeu {% if not panel_mode %}<span class="bc-sub">observés par le Journal, datés à la ligne près</span>{% endif %}</h2>
   {% if panel_mode %}<p class="section-hint">Observés par le Journal, datés à la ligne près.</p>{% endif %}
@@ -106,7 +106,7 @@
 {% endif %}
 
 {% if player_messages %}
-<div class="pd-panel" id="pd-messages">
+<div class="tab-panel" id="pd-messages">
 <section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
   <h2>Messages
     {%- if not panel_mode %} <span class="bc-sub">{{ messages_total }} message{{ "s" if messages_total > 1 }} écrit{{ "s" if messages_total > 1 }} en jeu</span>{% endif %}
@@ -132,7 +132,7 @@
 </div>
 {% endif %}
 
-<div class="pd-panel" id="pd-sessions">
+<div class="tab-panel" id="pd-sessions">
 <section class="{{ 'player-panel-section' if panel_mode else 'card' }}">
   <h2>Sessions{% if not panel_mode and sessions %} <span class="bc-sub">{{ sessions | length }} enregistrée{{ "s" if sessions | length > 1 }}</span>{% endif %}</h2>
   {% if sessions %}

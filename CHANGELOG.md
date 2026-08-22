@@ -4,19 +4,68 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.18.0 — 2026-08-22
+
+### Correction importante
+
+- **Les journaux du serveur n'étaient plus lus après leur rotation.** Minecraft
+  archive `latest.log` chaque nuit et à chaque redémarrage, puis repart d'un
+  fichier vide ; mc-admin continuait de chercher à lire au-delà de la fin de ce
+  nouveau fichier et restait aveugle jusqu'à ce qu'il retrouve la taille de
+  l'ancien — souvent plusieurs heures. Connexions, déconnexions, commandes, et
+  depuis la 0.17.0 morts, succès et messages, étaient perdus pendant ce temps.
+  Un joueur parti pendant ce trou restait affiché « en ligne » indéfiniment.
+- Le tchat écrit par PaperMC depuis son fil dédié était ignoré, à l'analyse
+  comme à l'import des anciennes archives.
+
+### Rôles
+
+- **Quatre échelons au lieu de trois**, avec l'apparition du **modérateur** :
+  il s'occupe des joueurs — expulsion, bannissement, liste blanche, journal —
+  sans pouvoir toucher au serveur. L'administrateur gagne la maintenance, les
+  réglages du jeu et les opérateurs. Restent réservées au propriétaire les
+  actions sans retour en arrière ou qui distribuent les droits : console brute,
+  restauration, arrêt définitif, mise à jour, serveurs, comptes.
+- Les rôles s'affichent en toutes lettres. Un rôle défini sur mesure garde le
+  nom qu'on lui a donné : les noms de rôles restent libres.
+- Les identifiants suivent désormais la convention Minecraft, 3 à 16
+  caractères. La règle ne s'applique qu'à la création : les comptes existants
+  plus longs continuent de fonctionner.
+
+### Page « Mon compte »
+
+- Le nom affiché, le mot de passe, la double authentification et les appareils
+  connectés étaient répartis entre deux dépliants et deux pages. Ils sont
+  réunis sur une seule page, en onglets, et le menu de profil n'en garde qu'une
+  entrée. Les anciennes adresses redirigent vers la bonne section.
+
+### Formulation
+
+- L'interface s'adresse désormais à la troisième personne. Elle tutoyait, par
+  héritage du temps où elle n'avait qu'un seul utilisateur.
+
+### Corrections d'affichage
+
+- Le menu de rôle de la page Comptes débordait sur la colonne voisine dès que
+  les libellés s'allongeaient ; le tableau ne s'étire plus indéfiniment et un
+  nom trop long est tronqué, lisible au survol.
+- Les cases à cocher du Journal, ajoutées en 0.17.0, ne filtraient rien : le
+  bouton « Filtrer » étant masqué, seules les listes déroulantes déclenchaient
+  la recherche.
+
 ## v0.17.0 — 2026-08-22
 
 ### Suivi des faits de jeu (nouveau)
 
 Le serveur écrivait déjà tout dans ses journaux ; mc-admin sait maintenant les
-lire, les garder et vous les montrer.
+lire, les garder et les montrer.
 
 - **Qui a tué qui.** Chaque mort est enregistrée avec sa cause et son auteur,
-  et les duels entre joueurs sont distingués des créatures : « FrenchEmperor02
-  a été tué par antogui » ne se lit pas comme « tué par un Noyé ». La page
+  et les duels entre joueurs sont distingués des créatures : « Trappeur
+  a été tué par Bucheron » ne se lit pas comme « tué par un Noyé ». La page
   Joueurs gagne un **tableau des duels**.
 - **Fiche joueur enrichie** : morts observées, duels gagnés, cause de mort la
-  plus fréquente et **bête noire** — celle qui vous tue le plus, joueur ou
+  plus fréquente et **bête noire** — celle qui tue le plus, joueur ou
   créature confondus.
 - **Succès et messages** rejoignent aussi le Journal, dans sa famille
   « En jeu », avec de **nouvelles cases à cocher** pour choisir ce qu'on
@@ -24,7 +73,7 @@ lire, les garder et vous les montrer.
   reste.
 - **Historique des messages d'un joueur**, sur sa fiche, réservé aux comptes
   pouvant sanctionner : de quoi vérifier un signalement avant d'agir.
-- Un script d'import (`scripts/import_game_events.py`) rejoue vos anciennes
+- Un script d'import (`scripts/import_game_events.py`) rejoue les anciennes
   archives de journaux, pour que le suivi ne commence pas à zéro. Il peut être
   relancé sans jamais dupliquer l'historique.
 - Les messages écrits en jeu sont conservés sans limite de temps. Un réglage

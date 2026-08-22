@@ -54,7 +54,7 @@ class TestOpLevelsWorker(unittest.TestCase):
                         "level": 4,
                         "bypassesPlayerLimit": False,
                     },
-                    {"uuid": "u2", "name": "Rovandil", "level": 3},
+                    {"uuid": "u2", "name": "Forgeron", "level": 3},
                 ]
             ),
             encoding="utf-8",

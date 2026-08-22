@@ -61,7 +61,7 @@
 <section class="card">
   <h2>Aucun canal de notification</h2>
   <p class="muted">Discord, Telegram… chaque canal a ses propres réglages :
-    tu peux recevoir les connexions des joueurs sur l'un et seulement les
+    les connexions des joueurs peuvent arriver sur l'un, et seulement les
     pannes sur l'autre.</p>
   <button type="button" id="channelAdd"><span class="pa-plus">＋</span> Ajouter un canal</button>
 </section>
@@ -74,7 +74,7 @@
     <h2 id="channelDialogTitle">Nouveau canal</h2>
 
     <div id="chStep1">
-      <p class="muted">Où veux-tu recevoir les notifications ?</p>
+      <p class="muted">Où recevoir les notifications ?</p>
       <div class="channel-types">
         <button type="button" class="channel-type" data-type="discord">
           <b>Discord</b>
@@ -110,9 +110,9 @@
         </label>
         <div id="chDetectOut" class="detect-out" hidden></div>
         <p class="muted rules-hint">1. Crée le bot via @BotFather (il donne le
-          jeton). 2. <b>Envoie /start à ton bot</b> — sans ça, Telegram lui
-          interdit de t'écrire. 3. Récupère ton chat ID (numérique) via
-          @userinfobot ; pour un groupe, ajoute le bot au groupe (ID négatif).</p>
+          jeton). 2. <b>Envoyer /start au bot</b> — sans ça, Telegram lui
+          interdit d'écrire le premier. 3. Récupérer le chat ID (numérique) via
+          @userinfobot ; pour un groupe, ajouter le bot au groupe (ID négatif).</p>
       </div>
       <div class="game-rules">
         {% for key, label in event_labels %}
@@ -185,7 +185,7 @@
       .then(function (data) {
         out.textContent = "";
         if (data.error) { out.textContent = data.error; return; }
-        // Plusieurs chats possibles (ton privé, un groupe…) : on les montre
+        // Plusieurs chats possibles (privé, groupe…) : on les montre
         // TOUS, un clic remplit le champ.
         data.chats.forEach(function (chat) {
           var btn = document.createElement("button");
@@ -199,7 +199,7 @@
           out.appendChild(btn);
         });
       })
-      .catch(function () { out.textContent = "Échec réseau — réessaie."; });
+      .catch(function () { out.textContent = "Échec réseau — réessayer."; });
   });
   form.addEventListener("submit", function () {
     // Anti-double-clic : le test d'envoi peut prendre quelques secondes —

@@ -57,6 +57,23 @@ def metric_display(value, unit: str) -> tuple[str, str]:
 
 templates.env.globals["metric_display"] = metric_display
 
+# Libellés des rôles LIVRÉS avec l'application. Les noms de rôles restent
+# libres (roles.yml) : un rôle maison s'affiche tel qu'il a été nommé, jamais
+# traduit de force.
+ROLE_LABELS = {
+    "owner": "Propriétaire",
+    "admin": "Administrateur",
+    "moderator": "Modérateur",
+    "viewer": "Observateur",
+}
+
+
+def role_label(name: str) -> str:
+    return ROLE_LABELS.get(str(name), str(name))
+
+
+templates.env.globals["role_label"] = role_label
+
 # Notes de release (bandeau MAJ) : Markdown GitHub -> HTML sûr et lisible.
 from api.release_notes import render_release_notes  # noqa: E402 — après l'env Jinja
 

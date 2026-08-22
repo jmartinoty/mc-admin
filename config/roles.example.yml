@@ -1,40 +1,63 @@
 # Gabarit des RÔLES de mc-admin.
 # Copier en config/roles.yml (gitignoré) et adapter. Chargé au DÉMARRAGE puis
 # gardé en mémoire (pas de relecture par requête → redémarrer après modif).
-# Fichier OPTIONNEL : absent, l'app utilise les rôles par défaut ci-dessous.
+# Fichier OPTIONNEL : absent, l'application utilise exactement les rôles
+# ci-dessous, qui sont ses valeurs par défaut.
 #
-# Les COMPTES ne se définissent plus ici (V6.5) : ils se créent dans l'UI
-# (premier lancement → assistant, ensuite page « Comptes ») et vivent dans
-# /data/users.json + /data/passwords.json. Une section `users:` historique
-# est importée automatiquement une fois, puis ignorée.
+# Les COMPTES ne se définissent plus ici (V6.5) : ils se créent dans
+# l'interface (premier lancement → assistant, ensuite page « Comptes ») et
+# vivent dans /data/users.json + /data/passwords.json. Une section `users:`
+# historique est importée automatiquement une fois, puis ignorée.
 #
 # Un rôle = un simple regroupement de permissions. Aucun nom de rôle n'est codé
-# en dur dans l'application : owner/admin/friend ci-dessous sont de simples
-# exemples, libre à toi d'en ajouter/renommer.
+# en dur dans l'application : ceux ci-dessous sont des exemples, libre à chacun
+# d'en ajouter, d'en retirer ou de les renommer.
 #
 # Permissions disponibles :
-#   STATUS  LOGS_VIEW  RESTART  START  BACKUP_TRIGGER  BACKUP_DOWNLOAD
-#   BACKUP_RETENTION  AUDIT_VIEW  RCON_RAW  OP_MANAGE  STOP  UPDATE
-#   WHITELIST_MANAGE  KICK  BAN_MANAGE
-# "*" = wildcard = toutes les permissions.
-# NB : START (démarrer un serveur arrêté) est distinct de STOP (owner) — un rôle
-# peut relancer le serveur sans avoir le droit de l'éteindre. Même logique pour
-# KICK (exclusion temporaire, owner+admin) vs BAN_MANAGE (bannissement, owner).
+#   STATUS  LOGS_VIEW  AUDIT_VIEW  RESTART  START  STOP  MAINTENANCE  UPDATE
+#   BACKUP_TRIGGER  BACKUP_DOWNLOAD  BACKUP_RESTORE  BACKUP_RETENTION
+#   BACKUP_MANAGE  KICK  BAN_MANAGE  WHITELIST_MANAGE  OP_MANAGE
+#   GAME_SETTINGS  RCON_RAW  SERVER_MANAGE  USER_MANAGE
+# "*" = toutes les permissions.
+#
+# Quelques distinctions volontaires :
+#   START (relancer un serveur arrêté) ≠ STOP (l'éteindre définitivement) ;
+#   KICK (expulsion, le joueur peut revenir) ≠ BAN_MANAGE (bannissement) ;
+#   MAINTENANCE (fermeture annoncée et réversible) ≠ STOP.
 
 roles:
+  # Propriétaire : tous les droits, y compris ceux qui n'apparaissent nulle
+  # part ailleurs — console brute, restauration, gestion des comptes.
   owner:
     - "*"
 
+  # Administrateur : exploite le serveur au quotidien, sans pouvoir en changer
+  # la configuration ni distribuer les droits.
   admin:
     - STATUS
     - LOGS_VIEW
+    - AUDIT_VIEW
+    - KICK
+    - BAN_MANAGE
+    - WHITELIST_MANAGE
     - RESTART
     - START
+    - MAINTENANCE
     - BACKUP_TRIGGER
     - BACKUP_DOWNLOAD
-    - KICK
+    - GAME_SETTINGS
+    - OP_MANAGE
 
+  # Modérateur : s'occupe des joueurs, jamais du serveur.
+  moderator:
+    - STATUS
+    - LOGS_VIEW
+    - AUDIT_VIEW
+    - KICK
+    - BAN_MANAGE
+    - WHITELIST_MANAGE
+
+  # Observateur : lecture seule.
   viewer:
     - STATUS
     - LOGS_VIEW
-

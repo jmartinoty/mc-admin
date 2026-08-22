@@ -12,10 +12,33 @@ from .model import WILDCARD, Permission, Role, User
 
 # Rôles par défaut d'une installation SANS roles.yml (V6.2 — premier
 # lancement en libre-service). Un roles.yml présent les remplace entièrement.
+#
+# Quatre échelons (22/08/2026), là où il n'y en avait que trois : il manquait
+# le MODÉRATEUR, quelqu'un qui gère les joueurs sans pouvoir toucher au
+# serveur — le cas courant d'une communauté, et le seul qui n'était couvert ni
+# par l'observateur (rien) ni par l'administrateur (tout l'exploitation).
+#
+# Ce qui reste au propriétaire SEUL, et pourquoi :
+#   RCON_RAW        l'échappatoire complète : toute commande, sans garde-fou ;
+#   BACKUP_RESTORE  écrase le monde en place ;
+#   STOP / UPDATE   arrêt définitif et changement de version du jeu ;
+#   SERVER_MANAGE   rebranche l'application sur un autre serveur ;
+#   USER_MANAGE     donne et retire les droits — la clé de toutes les autres.
 DEFAULT_ROLES_SPEC: dict[str, list[str]] = {
     "owner": ["*"],
-    "admin": ["STATUS", "LOGS_VIEW", "RESTART", "START", "BACKUP_TRIGGER",
-              "BACKUP_DOWNLOAD", "KICK", "WHITELIST_MANAGE"],
+    "admin": [
+        # tout ce que peut le modérateur…
+        "STATUS", "LOGS_VIEW", "AUDIT_VIEW",
+        "KICK", "BAN_MANAGE", "WHITELIST_MANAGE",
+        # …plus l'exploitation courante du serveur
+        "RESTART", "START", "MAINTENANCE",
+        "BACKUP_TRIGGER", "BACKUP_DOWNLOAD",
+        "GAME_SETTINGS", "OP_MANAGE",
+    ],
+    "moderator": [
+        "STATUS", "LOGS_VIEW", "AUDIT_VIEW",
+        "KICK", "BAN_MANAGE", "WHITELIST_MANAGE",
+    ],
     "viewer": ["STATUS", "LOGS_VIEW"],   # lecture seule (état + logs)
 }
 

@@ -28,11 +28,11 @@ class TestOpsFileList(unittest.TestCase):
     def test_parses_real_ops_json_shape(self):
         self._write([
             {"uuid": "6e5fc5ec-afcd-42e4-8ecf-9325a0f94670", "name": "Trappeur", "level": 4, "bypassesPlayerLimit": False},
-            {"uuid": "ae397f97-bc0b-4b1a-ab99-c7183fb3863e", "name": "Rovandil", "level": 3, "bypassesPlayerLimit": False},
+            {"uuid": "b7c31d42-0e6a-4f18-9c25-1a3d5e7f9b04", "name": "Forgeron", "level": 3, "bypassesPlayerLimit": False},
         ])
         self.assertEqual(
             OpsFile(self.path).list_ops(),
-            [OpEntry(name="Trappeur", level=4), OpEntry(name="Rovandil", level=3)],
+            [OpEntry(name="Trappeur", level=4), OpEntry(name="Forgeron", level=3)],
         )
 
     def test_empty_array(self):

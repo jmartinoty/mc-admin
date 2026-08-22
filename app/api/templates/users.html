@@ -10,17 +10,17 @@
       <tbody>
         {% for a in accounts %}
         <tr>
-          <td><b>{{ a.display_name }}</b>{% if a.display_name != a.username %} <span class="muted">({{ a.username }})</span>{% endif %}
-            {% if a.is_me %}<span class="chip manual">toi</span>{% endif %}</td>
+          <td><b class="account-name" title="{{ a.username }}">{{ a.display_name }}</b>{% if a.display_name != a.username %} <span class="muted">({{ a.username }})</span>{% endif %}
+            {% if a.is_me %}<span class="chip manual">compte actuel</span>{% endif %}</td>
           <td>
             {% if a.is_me %}
-            {{ a.role }}
+            {{ role_label(a.role) }}
             {% else %}
             <form method="post" action="/actions/users/role" class="inline role-form">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="username" value="{{ a.username }}">
               <select name="role">
-                {% for r in roles %}<option value="{{ r }}" {% if r == a.role %}selected{% endif %}>{{ r }}</option>{% endfor %}
+                {% for r in roles %}<option value="{{ r }}" {% if r == a.role %}selected{% endif %}>{{ role_label(r) }}</option>{% endfor %}
               </select>
               <button class="small">OK</button>
             </form>
@@ -50,11 +50,12 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="inline sched-form">
       <label>Nom d'utilisateur
-        <input name="username" required maxlength="32" pattern="[A-Za-z0-9_\-]{3,32}" autocomplete="off">
+        <input name="username" required maxlength="16" pattern="[A-Za-z0-9_\-]{3,16}"
+               autocomplete="off" title="3 à 16 caractères, comme un pseudo Minecraft">
       </label>
       <label>Rôle
         <select name="role">
-          {% for r in roles %}<option value="{{ r }}" {% if r == "viewer" %}selected{% endif %}>{{ r }}</option>{% endfor %}
+          {% for r in roles %}<option value="{{ r }}" {% if r == "viewer" %}selected{% endif %}>{{ role_label(r) }}</option>{% endfor %}
         </select>
       </label>
       <label>Mot de passe initial
@@ -62,7 +63,7 @@
       </label>
     </div>
     <p class="muted rules-hint">La personne pourra changer son mot de passe et
-      son pseudo depuis son menu profil.</p>
+      son pseudo depuis sa page « Mon compte ».</p>
     <button class="small">Créer</button>
   </form>
 </section>

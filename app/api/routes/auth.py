@@ -24,7 +24,12 @@ from domain.model import User
 router = APIRouter()
 logger = logging.getLogger("mc_admin")
 
-_USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,32}$")
+# Longueur alignée sur les pseudos Minecraft (3 à 16) plutôt que sur une
+# valeur maison : c'est la convention que connaissent les utilisateurs de
+# l'outil, et beaucoup nomment leur compte comme leur pseudo en jeu. Ne
+# s'applique qu'à la CRÉATION : un compte plus ancien, plus long, continue
+# de se connecter normalement.
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,16}$")
 _PERSISTENCE_ERRORS = (OSError, ValueError)
 
 
@@ -80,7 +85,7 @@ def setup_create(
     username = username.strip()
     error = None
     if not _USERNAME_RE.match(username):
-        error = "Nom invalide : 3 à 32 caractères (lettres, chiffres, - et _)."
+        error = "Nom invalide : 3 à 16 caractères (lettres, chiffres, - et _)."
     elif len(password) < 8:
         error = "Mot de passe trop court (8 caractères minimum)."
     elif password != password_confirm:
@@ -113,7 +118,7 @@ def setup_create(
     # lui redemander serait une friction inutile (retour Jeremy).
     request.session["user"] = username
     _register_session(request, username)
-    request.session["flash"] = f"Bienvenue, {username} ! Branchons ton serveur."
+    request.session["flash"] = f"Bienvenue, {username}. Prochaine étape : brancher le serveur."
     return RedirectResponse("/servers", status_code=303)
 
 
@@ -163,7 +168,7 @@ def action_user_add(
     username = username.strip()
     role_obj = request.app.state.roles.get(role)
     if not _USERNAME_RE.match(username):
-        request.session["flash"] = "Échec : nom invalide (3 à 32 caractères, lettres/chiffres/-/_)."
+        request.session["flash"] = "Échec : nom invalide (3 à 16 caractères, lettres/chiffres/-/_)."
     elif username in request.app.state.users:
         request.session["flash"] = f"Échec : le compte « {username} » existe déjà."
     elif role_obj is None:
@@ -348,7 +353,7 @@ def login(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"csrf_token": _csrf(request), "error": "Trop de tentatives — réessaie dans quelques minutes."},
+            {"csrf_token": _csrf(request), "error": "Trop de tentatives — réessayer dans quelques minutes."},
             status_code=429,
         )
     try:
@@ -419,7 +424,7 @@ def login_verify(request: Request, code: str = Form(...), csrf_token: str = Form
         return templates.TemplateResponse(
             request,
             "login_totp.html",
-            {"csrf_token": _csrf(request), "error": "Trop de tentatives — réessaie dans quelques minutes."},
+            {"csrf_token": _csrf(request), "error": "Trop de tentatives — réessayer dans quelques minutes."},
             status_code=429,
         )
     secret = request.app.state.totp.secret(username) or ""
@@ -555,30 +560,65 @@ def _relative_since(seconds_ago: float) -> str:
     return f"il y a {days} j"
 
 
-@router.get("/sessions", response_class=HTMLResponse)
-def sessions_page(request: Request):
+def _sessions_rows(request: Request, user) -> list[dict]:
+    """Appareils connectés du compte, pour la page Compte."""
+    registry = getattr(request.app.state, "sessions", None)
+    if registry is None:
+        return []
+    current_sid = request.session.get("sid")
+    now = time.time()
+    return [
+        {
+            "sid": info.sid,
+            "device": _describe_user_agent(info.user_agent),
+            "ip": info.ip or "—",
+            "current": info.sid == current_sid,
+            "created": _relative_since(now - info.created_at),
+            "last_seen": _relative_since(now - info.last_seen),
+        }
+        for info in registry.list_for(user.username)
+    ]
+
+
+def _twofa_context(request: Request, user) -> dict:
+    """État de la double authentification, pour la page Compte."""
+    store = getattr(request.app.state, "totp", None)
+    context = {
+        "twofa_enabled": bool(store and store.is_enabled(user.username)),
+        "twofa_pending": bool(store and store.has_pending(user.username)),
+    }
+    if store is not None and store.has_pending(user.username) and not context["twofa_enabled"]:
+        secret = store.secret(user.username) or ""
+        context["twofa_secret"] = totp.format_secret(secret)
+        context["twofa_uri"] = totp.provisioning_uri(secret, user.username)
+    return context
+
+
+@router.get("/compte", response_class=HTMLResponse)
+def account_page(request: Request):
+    """Page Compte : identité, mot de passe, double authentification et
+    appareils connectés réunis (22/08/2026).
+
+    Avant, le pseudo et le mot de passe se modifiaient dans des dépliants du
+    menu de profil, tandis que la 2FA et les appareils avaient chacun leur
+    page. Trois endroits pour un même sujet : tout est regroupé ici, et le
+    menu ne garde qu'une entrée."""
     from api.routes.common import _nav_context  # local : évite un cycle d'import
 
     user = _current(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-    registry = getattr(request.app.state, "sessions", None)
-    current_sid = request.session.get("sid")
-    rows = []
-    if registry is not None:
-        now = time.time()
-        for info in registry.list_for(user.username):
-            rows.append({
-                "sid": info.sid,
-                "device": _describe_user_agent(info.user_agent),
-                "ip": info.ip or "—",
-                "current": info.sid == current_sid,
-                "created": _relative_since(now - info.created_at),
-                "last_seen": _relative_since(now - info.last_seen),
-            })
-    context = _nav_context(request, user, "sessions")
-    context["sessions"] = rows
-    return templates.TemplateResponse(request, "sessions.html", context)
+    context = _nav_context(request, user, "compte")
+    context["sessions"] = _sessions_rows(request, user)
+    context.update(_twofa_context(request, user))
+    return templates.TemplateResponse(request, "compte.html", context)
+
+
+@router.get("/sessions", response_class=HTMLResponse)
+def sessions_page(request: Request):
+    # Ancienne page, conservée en redirection : des liens et des signets
+    # existent encore.
+    return RedirectResponse("/compte#appareils", status_code=303)
 
 
 @router.post("/actions/sessions/revoke")
@@ -593,7 +633,7 @@ def action_revoke_session(
     _require_csrf(request, csrf_token)
     registry = getattr(request.app.state, "sessions", None)
     if registry is None:
-        return RedirectResponse("/sessions", status_code=303)
+        return RedirectResponse("/compte#appareils", status_code=303)
     if sid == request.session.get("sid"):
         # Révoquer sa propre session courante = se déconnecter.
         registry.revoke(sid, user.username)
@@ -603,7 +643,7 @@ def action_revoke_session(
     request.session["flash"] = (
         "Appareil déconnecté." if revoked else "Cet appareil n'est plus connecté."
     )
-    return RedirectResponse("/sessions", status_code=303)
+    return RedirectResponse("/compte#appareils", status_code=303)
 
 
 @router.post("/actions/sessions/revoke-others")
@@ -614,13 +654,13 @@ def action_revoke_other_sessions(request: Request, csrf_token: str = Form(...)):
     _require_csrf(request, csrf_token)
     registry = getattr(request.app.state, "sessions", None)
     if registry is None:
-        return RedirectResponse("/sessions", status_code=303)
+        return RedirectResponse("/compte#appareils", status_code=303)
     count = registry.revoke_others(request.session.get("sid") or "", user.username)
     request.session["flash"] = (
         f"{count} autre(s) appareil(s) déconnecté(s)." if count
         else "Aucun autre appareil connecté."
     )
-    return RedirectResponse("/sessions", status_code=303)
+    return RedirectResponse("/compte#appareils", status_code=303)
 
 
 # --- double authentification (2FA / TOTP, self-service) ---
@@ -634,20 +674,8 @@ def _verify_own_password(request: Request, user, password: str) -> bool:
 
 @router.get("/security", response_class=HTMLResponse)
 def security_page(request: Request):
-    from api.routes.common import _nav_context  # local : évite un cycle d'import
-
-    user = _current(request)
-    if user is None:
-        return RedirectResponse("/login", status_code=303)
-    store = getattr(request.app.state, "totp", None)
-    context = _nav_context(request, user, "security")
-    context["twofa_enabled"] = bool(store and store.is_enabled(user.username))
-    context["twofa_pending"] = bool(store and store.has_pending(user.username))
-    if store is not None and store.has_pending(user.username) and not context["twofa_enabled"]:
-        secret = store.secret(user.username) or ""
-        context["twofa_secret"] = totp.format_secret(secret)
-        context["twofa_uri"] = totp.provisioning_uri(secret, user.username)
-    return templates.TemplateResponse(request, "security.html", context)
+    # Idem : la double authentification vit désormais dans la page Compte.
+    return RedirectResponse("/compte#securite", status_code=303)
 
 
 @router.post("/security/start")
@@ -661,7 +689,7 @@ def security_start(request: Request, csrf_token: str = Form(...)):
     store = request.app.state.totp
     if not store.is_enabled(user.username):
         store.set_pending(user.username, totp.generate_secret())
-    return RedirectResponse("/security", status_code=303)
+    return RedirectResponse("/compte#securite", status_code=303)
 
 
 @router.post("/security/enable")
@@ -680,8 +708,8 @@ def security_enable(request: Request, code: str = Form(...), csrf_token: str = F
         store.confirm(user.username)
         request.session["flash"] = "Double authentification activée."
     else:
-        request.session["flash"] = "Code invalide — vérifie l'heure de ton téléphone et réessaie."
-    return RedirectResponse("/security", status_code=303)
+        request.session["flash"] = "Code invalide — vérifier l'heure du téléphone, puis réessayer."
+    return RedirectResponse("/compte#securite", status_code=303)
 
 
 @router.post("/security/cancel")
@@ -694,7 +722,7 @@ def security_cancel(request: Request, csrf_token: str = Form(...)):
     store = request.app.state.totp
     if store.has_pending(user.username) and not store.is_enabled(user.username):
         store.remove(user.username)
-    return RedirectResponse("/security", status_code=303)
+    return RedirectResponse("/compte#securite", status_code=303)
 
 
 @router.post("/security/disable")
@@ -715,4 +743,4 @@ def security_disable(
     else:
         store.remove(user.username)
         request.session["flash"] = "Double authentification désactivée."
-    return RedirectResponse("/security", status_code=303)
+    return RedirectResponse("/compte#securite", status_code=303)

@@ -93,7 +93,7 @@ class TestAliases(unittest.TestCase):
             json.dump([{"uuid": UUID_ALICE, "name": "alice"}], fh)
         self.aliases = os.path.join(self.dir.name, "legacy-player-names.json")
         with open(self.aliases, "w") as fh:
-            json.dump({"_source": "test", "aliases": {UUID_BOB: "FrenchEmperor02",
+            json.dump({"_source": "test", "aliases": {UUID_BOB: "Trappeur",
                                                       UUID_ALICE: "vieux-nom"}}, fh)
         self._write(UUID_ALICE, _stats_payload())
         self._write(UUID_BOB, _stats_payload())
@@ -106,7 +106,7 @@ class TestAliases(unittest.TestCase):
         adapter = FilePlayerStats(self.stats_dir, self.usercache, self.aliases)
         by_uuid = {st.uuid: st for st in adapter.all_stats()}
         # Bob a expiré du usercache : l'alias d'époque donne son pseudo.
-        self.assertEqual(by_uuid[UUID_BOB].player, "FrenchEmperor02")
+        self.assertEqual(by_uuid[UUID_BOB].player, "Trappeur")
         # Alice est dans le usercache (plus frais) : il PRIME sur l'alias.
         self.assertEqual(by_uuid[UUID_ALICE].player, "alice")
 

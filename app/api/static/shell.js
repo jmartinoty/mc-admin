@@ -431,3 +431,54 @@ window.mc = window.mc || {};
     }
   });
 })();
+
+/* Onglets — composant partagé (fiche joueur, page Mon compte).
+ *
+ * AMÉLIORATION PROGRESSIVE : le gabarit rend TOUS les panneaux visibles ; ce
+ * script pose `.tabbed` sur le conteneur puis masque les inactifs. Sans lui,
+ * ou s'il échoue, la page reste entièrement lisible, sections empilées, et les
+ * onglets se comportent en simples ancres.
+ *
+ * Un conteneur `[data-tabs]` contient des `.tab` (des liens `href="#id"`) et
+ * des `.tab-panel` portant ces identifiants.
+ */
+(function () {
+  Array.prototype.forEach.call(document.querySelectorAll("[data-tabs]"), function (root) {
+    var tabs = Array.prototype.slice.call(root.querySelectorAll(".tab"));
+    var panels = Array.prototype.slice.call(root.querySelectorAll(".tab-panel"));
+    if (tabs.length < 2 || !panels.length) return;   // un seul onglet : inutile
+
+    function show(id, remember) {
+      var found = false;
+      panels.forEach(function (panel) {
+        var active = panel.id === id;
+        panel.hidden = !active;
+        if (active) found = true;
+      });
+      if (!found) return false;
+      tabs.forEach(function (tab) {
+        if (tab.getAttribute("href") === "#" + id) tab.setAttribute("aria-current", "page");
+        else tab.removeAttribute("aria-current");
+      });
+      // L'onglet vit dans l'URL : la page reste partageable et rechargeable.
+      if (remember && window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", "#" + id);
+      }
+      return true;
+    }
+
+    root.classList.add("tabbed");
+    tabs.forEach(function (tab) {
+      tab.addEventListener("click", function (event) {
+        if (show(tab.getAttribute("href").slice(1), true)) event.preventDefault();
+      });
+    });
+    // Ancre d'arrivée (lien « Voir les 125 messages », redirection depuis
+    // /security…), sinon le premier panneau.
+    var wanted = (window.location.hash || "").slice(1);
+    if (!wanted || !show(wanted, false)) show(panels[0].id, false);
+    window.addEventListener("hashchange", function () {
+      show((window.location.hash || "").slice(1), false);
+    });
+  });
+})();

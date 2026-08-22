@@ -157,7 +157,7 @@ h2 { font-family: var(--mono); font-size: .72rem; margin: 0 0 .6rem; color: var(
 .po-row input { margin: 0; flex: 1; min-width: 0; padding: .4rem .5rem; }
 .po-pw { margin: 0 0 .4rem; padding: .4rem .5rem; }
 .po-save { padding: .4rem .7rem; font-size: .82rem; }
-.po-item { display: flex; align-items: center; gap: .55rem; width: 100%; padding: .55rem .8rem; background: none; border: none; color: var(--text); font: inherit; font-size: .86rem; cursor: pointer; text-align: left; border-radius: 0; }
+.po-item { display: flex; align-items: center; gap: .55rem; width: 100%; padding: .55rem .8rem; background: none; border: none; color: var(--text); font: inherit; font-size: .86rem; cursor: pointer; text-align: left; border-radius: 0; text-decoration: none; }
 .po-item svg { width: 15px; height: 15px; color: var(--muted); flex: 0 0 15px; }
 .po-item:hover { background: var(--surface-2); }
 .po-item.danger { color: var(--danger); }
@@ -1218,9 +1218,37 @@ a.err-code-link:hover { color: var(--accent-strong); border-color: var(--accent)
 /* Passe d'alignement (retour Jeremy 18/07, captures) */
 .players-card td:nth-child(4) { white-space: nowrap; }   /* « avant mc-admin · date » sur UNE ligne */
 .players-empty { padding: .4rem 0 .8rem; }
+/* Le tableau des comptes ne s'étire plus indéfiniment : les colonnes Rôle et
+   Actions étant figées, la colonne Compte absorbait tout l'espace restant —
+   plus de 1000 px sur un grand écran pour afficher « Test ». */
+.users-card { max-width: 64rem; }
 .users-card table.audit { table-layout: fixed; width: 100%; }
-.users-card table.audit th:nth-child(2) { width: 170px; }
-.users-card table.audit th:nth-child(3) { width: 420px; }
+/* Et un nom trop long est tronqué plutôt que de pousser la mise en page : le
+   nom complet reste lisible au survol (attribut title). Aucune limite
+   arbitraire sur les données — un pseudo Minecraft fait jusqu'à 16
+   caractères, et les comptes existants peuvent aller à 32. */
+.users-card td:first-child .account-name {
+  display: inline-block; max-width: 100%; vertical-align: bottom;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* La colonne Rôle porte un menu déroulant ET son bouton. Elle était figée à
+   170 px, taillée pour des noms techniques courts (« viewer ») ; les libellés
+   en toutes lettres (« Administrateur ») débordaient sur la colonne des
+   actions — table-layout: fixed ne redimensionne pas, il laisse déborder. */
+.users-card table.audit th:nth-child(2) { width: 240px; }
+.users-card table.audit th:nth-child(3) { width: 360px; }
+.users-card table.audit td { overflow: hidden; }   /* filet : jamais de chevauchement */
+.role-form { display: flex; align-items: center; gap: .4rem; }
+.role-form select { min-width: 0; flex: 1 1 auto; }   /* se comprime au lieu de déborder */
+.role-form button { flex: 0 0 auto; }
+
+@media (max-width: 900px) {
+  /* Écran étroit : le tableau défile déjà dans son cadre, on rend simplement
+     aux colonnes de quoi afficher leur contenu en entier. */
+  .users-card table.audit { table-layout: auto; }
+  .users-card table.audit th:nth-child(2),
+  .users-card table.audit th:nth-child(3) { width: auto; }
+}
 /* Page Serveurs : libellés des branchements en colonne fixe -> détails alignés */
 .checks .check { display: grid; grid-template-columns: 18px 230px minmax(0, 1fr); gap: .35rem .5rem; align-items: baseline; }
 .checks .check .muted { overflow-wrap: anywhere; }
@@ -1229,33 +1257,33 @@ a.err-code-link:hover { color: var(--accent-strong); border-color: var(--accent)
   .checks .check .muted { grid-column: 2; }
 }
 
-/* --- Fiche joueur : onglets (page complète uniquement) ------------------
+/* --- Onglets (fiche joueur, page Mon compte) ---------------------------
    Les panneaux sont visibles PAR DÉFAUT : c'est le script qui pose
-   `.pd-tabbed` sur le conteneur et masque les inactifs. Sans JavaScript, la
+   `.tabbed` sur le conteneur et masque les inactifs. Sans JavaScript, la
    fiche reste donc entièrement lisible, empilée, et les onglets se comportent
    en simples ancres. */
-.pd-tabs {
+.tabs {
   display: flex; flex-wrap: wrap; gap: .35rem;
   margin: 0 0 1rem; padding-bottom: .3rem;
   border-bottom: 1px solid var(--border-soft);
 }
-.pd-tab {
+.tab {
   padding: .45rem .85rem; border-radius: 8px 8px 0 0;
   color: var(--muted); text-decoration: none;
   font-size: .82rem; font-weight: 600; white-space: nowrap;
   border: 1px solid transparent; border-bottom: none;
 }
-.pd-tab:hover { color: var(--text); background: var(--surface-soft, rgba(127, 127, 127, .12)); }
-.pd-tab[aria-current="page"] {
+.tab:hover { color: var(--text); background: var(--surface-soft, rgba(127, 127, 127, .12)); }
+.tab[aria-current="page"] {
   color: var(--text); background: var(--surface, rgba(127, 127, 127, .16));
   border-color: var(--border-soft);
 }
-.pd-tab-count {
+.tab-count {
   display: inline-block; margin-left: .35rem; padding: 0 .4rem;
   border-radius: 999px; background: var(--border-soft);
   font-size: .72rem; font-variant-numeric: tabular-nums;
 }
-.pd-tabbed .pd-panel[hidden] { display: none; }
+.tabbed .tab-panel[hidden] { display: none; }
 
 /* Listes longues (125 messages, 200 sessions) : elles défilent dans leur
    propre cadre plutôt que d'étirer la page. */
@@ -1263,7 +1291,7 @@ a.err-code-link:hover { color: var(--accent-strong); border-color: var(--accent)
 .pd-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--card, var(--bg)); }
 
 @media (max-width: 640px) {
-  .pd-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  .tabs { flex-wrap: nowrap; overflow-x: auto; }
   .pd-scroll { max-height: 70vh; }
 }
 
@@ -1285,3 +1313,17 @@ a.err-code-link:hover { color: var(--accent-strong); border-color: var(--accent)
 }
 .ingame-check input { accent-color: var(--accent, currentColor); }
 .ingame-check:hover span { color: var(--text); }
+
+/* Page Compte : formulaires en colonne, plus lisibles que les rangées
+   compactes du menu de profil dont ils viennent. */
+.account-form { margin: .6rem 0 0; max-width: 32rem; }
+.account-label {
+  display: block; margin: .7rem 0 .25rem;
+  color: var(--muted); font-size: .78rem;
+}
+.account-form input[type="text"],
+.account-form input[type="password"],
+.account-form input:not([type]) { width: 100%; }
+.account-row { display: flex; gap: .5rem; align-items: center; }
+.account-row input { flex: 1 1 auto; min-width: 0; }
+.account-row button { flex: 0 0 auto; }

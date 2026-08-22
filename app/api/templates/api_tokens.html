@@ -55,7 +55,7 @@
       </label>
       <label>Rôle
         <select name="role">
-          {% for r in roles %}<option value="{{ r }}" {% if r == "viewer" %}selected{% endif %}>{{ r }}</option>{% endfor %}
+          {% for r in roles %}<option value="{{ r }}" {% if r == "viewer" %}selected{% endif %}>{{ role_label(r) }}</option>{% endfor %}
         </select>
       </label>
     </div>

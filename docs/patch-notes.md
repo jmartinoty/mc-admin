@@ -87,3 +87,28 @@ fix, même hors release.
   lourdes que nécessaire) et les tuiles absentes (cas normal en bordure de
   rendu) repartaient sans cache, donc re-demandées à chaque mouvement. Fix :
   gzip négocié de bout en bout + cache court sur les 404 (`41d51ec`).
+
+## 2026-08-22 — Joueur affiché en ligne pendant plus d'un jour
+
+**Constat (Jeremy)** : mc-admin annonçait Trappeur et Mineur
+connectés alors qu'un seul joueur l'était.
+
+**Cause** : le tailer de `latest.log` mémorise sa position et fait `seek()` à
+chaque passe, sans vérifier que le fichier est toujours le même. Minecraft
+archive son journal chaque nuit et à chaque redémarrage, puis repart d'un
+fichier vide : on cherchait à lire à l'octet 96 000 d'un fichier qui n'en
+faisait plus que 5 000. Aucune ligne n'était lue et la position ne bougeait
+pas — le tailer restait aveugle jusqu'à ce que le nouveau fichier dépasse
+l'ancienne taille. Le « left the game » de Trappeur, à 00:33 juste
+après la rotation de minuit, est tombé dans ce trou.
+
+**Correctif** : un fichier plus court que la position mémorisée ne peut
+signifier qu'une rotation ou une troncature — on repart alors du début.
+Deux tests de non-régression, vérifiés en échec sans le correctif.
+
+**Portée** : le bug datait de la V3.4 (connexions et commandes). Depuis la
+0.17.0, morts, succès et tchat passent par le même tailer : chaque rotation
+en perdait aussi.
+
+**Nettoyage** : la session restée ouverte a été refermée à son heure réelle de
+départ (00:33:28, relevée dans l'archive), pas à l'instant du nettoyage.

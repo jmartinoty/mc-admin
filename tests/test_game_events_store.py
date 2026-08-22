@@ -512,9 +512,9 @@ class PanelPreviewTests(unittest.TestCase):
     def test_full_page_shows_them_all_with_tabs(self):
         html = self._render(panel_mode=False)
         self.assertIn("message 9", html)
-        self.assertIn("pd-tabs", html)
+        self.assertIn('class="tabs"', html)
         self.assertIn("#pd-messages", html)
         self.assertIn("pd-scroll", html)   # liste longue : cadre défilant
 
     def test_panel_has_no_tabs(self):
-        self.assertNotIn("pd-tabs", self._render(panel_mode=True))
+        self.assertNotIn('class="tabs"', self._render(panel_mode=True))

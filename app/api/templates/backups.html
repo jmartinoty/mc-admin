@@ -66,7 +66,7 @@
 {% elif can_manage %}
 <section class="card profile-empty">
   <p><b>Aucune sauvegarde configurée.</b></p>
-  <p class="muted">Protège ton serveur en quelques clics : choisis quoi
+  <p class="muted">Protéger le serveur en quelques clics : choisir quoi
     sauvegarder, à quelle fréquence, et combien de temps conserver.</p>
   <button type="button" class="danger" id="profileAdd">+ Créer une configuration</button>
 </section>
@@ -89,14 +89,14 @@
     </div>
 
     <section class="wizard-step" data-step="0">
-      <p class="wizard-q">Comment veux-tu l'appeler ?</p>
+      <p class="wizard-q">Comment l'appeler ?</p>
       <label class="sr-only" for="profileName">Nom de la configuration</label>
       <input name="name" id="profileName" maxlength="40" required placeholder="ex. Serveur complet" autocomplete="off">
-      <p class="muted wizard-help">Un nom pour t'y retrouver quand tu auras plusieurs sauvegardes.</p>
+      <p class="muted wizard-help">Un nom pour s'y retrouver quand il y aura plusieurs sauvegardes.</p>
     </section>
 
     <section class="wizard-step" data-step="1" hidden>
-      <p class="wizard-q">Où veux-tu la ranger ?</p>
+      <p class="wizard-q">Où la ranger ?</p>
       <div class="dest-options">
         <label class="dest-option is-active">
           <input type="radio" name="destination" value="local" checked>
@@ -119,7 +119,7 @@
     </section>
 
     <section class="wizard-step" data-step="2" hidden>
-      <p class="wizard-q">Que veux-tu protéger ?</p>
+      <p class="wizard-q">Que faut-il protéger ?</p>
       {% for key, label, hint in profile_categories %}
       <label class="profile-cat"><input type="checkbox" name="include" value="{{ key }}"
         {% if key == "all" %}data-exclusive="1"{% endif %}>
@@ -437,13 +437,13 @@
       pNext.hidden = i === pSteps.length - 1;
       pSubmit.hidden = i !== pSteps.length - 1;
     }
-    var STEP_WHAT = 2;  // « Que veux-tu protéger ? » (catégories)
+    var STEP_WHAT = 2;  // « Que faut-il protéger ? » (catégories)
     pNext.addEventListener("click", function () {
       if (pStepIndex === 0 && !pName.reportValidity()) return;
       if (pStepIndex === STEP_WHAT) {
         var any = Array.prototype.some.call(checks, function (b) { return b.checked; });
         if (!any) {
-          window.mc && window.mc.toast && window.mc.toast("Choisis au moins une chose à protéger.");
+          window.mc && window.mc.toast && window.mc.toast("Choisir au moins une chose à protéger.");
           return;
         }
       }
@@ -536,7 +536,7 @@
       if (!any) {
         e.preventDefault();
         showStep(STEP_WHAT);
-        window.mc && window.mc.toast && window.mc.toast("Choisis au moins une chose à protéger.");
+        window.mc && window.mc.toast && window.mc.toast("Choisir au moins une chose à protéger.");
       }
     });
   }

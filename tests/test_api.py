@@ -392,7 +392,7 @@ class TestSessions(ApiTestBase):
 
     def test_sessions_page_lists_current_device(self):
         self.login("paul", "admin-pw")
-        page = self.client.get("/sessions")
+        page = self.client.get("/compte")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Appareils connectés", page.text)
         self.assertIn("cet appareil", page.text)
@@ -404,10 +404,10 @@ class TestSessions(ApiTestBase):
         self._login_on(other, "paul", "admin-pw")
         self.assertEqual(other.get("/").status_code, 200)  # l'autre est bien connecté
         # Deux sessions visibles depuis le 1er appareil.
-        self.assertEqual(self.client.get("/sessions").text.count('name="sid"'), 2)
+        self.assertEqual(self.client.get("/compte").text.count('name="sid"'), 2)
 
         # « Déconnecter tous les autres appareils » depuis le 1er.
-        token = self._csrf_from_page(self.client, "/sessions")
+        token = self._csrf_from_page(self.client, "/compte")
         res = self.client.post("/actions/sessions/revoke-others", data={"csrf_token": token})
         self.assertEqual(res.status_code, 303)
 
@@ -417,10 +417,10 @@ class TestSessions(ApiTestBase):
 
     def test_revoking_own_current_session_logs_out(self):
         self.login("paul", "admin-pw")
-        page = self.client.get("/sessions").text
+        page = self.client.get("/compte").text
         import re as _re
         sid = _re.search(r'name="sid" value="([^"]+)"', page).group(1)
-        token = self._csrf_from_page(self.client, "/sessions")
+        token = self._csrf_from_page(self.client, "/compte")
         res = self.client.post(
             "/actions/sessions/revoke", data={"sid": sid, "csrf_token": token}
         )
@@ -428,8 +428,18 @@ class TestSessions(ApiTestBase):
         self.assertEqual(res.headers["location"], "/login")
         self.assertEqual(self.client.get("/").status_code, 303)  # déconnecté
 
-    def test_sessions_page_requires_login(self):
-        self.assertEqual(self.client.get("/sessions").status_code, 303)
+    def test_account_page_requires_login(self):
+        self.assertEqual(self.client.get("/compte").status_code, 303)
+
+    def test_old_pages_redirect_to_the_account_page(self):
+        """/sessions et /security ont été fusionnées dans /compte : les liens
+        et signets existants doivent continuer de fonctionner."""
+        self.login("jeremy", "owner-pw")
+        for ancienne, ancre in (("/sessions", "#appareils"), ("/security", "#securite")):
+            with self.subTest(ancienne=ancienne):
+                res = self.client.get(ancienne, follow_redirects=False)
+                self.assertEqual(res.status_code, 303)
+                self.assertEqual(res.headers["location"], "/compte" + ancre)
 
 
 class TestTwoFactor(ApiTestBase):
@@ -441,9 +451,9 @@ class TestTwoFactor(ApiTestBase):
         """Active la 2FA de bout en bout via l'UI, puis se déconnecte.
         Renvoie le secret base32 (pour fabriquer des codes dans les tests)."""
         self.login(username, password)
-        token = self._csrf_from(self.client.get("/security").text)
+        token = self._csrf_from(self.client.get("/compte").text)
         self.client.post("/security/start", data={"csrf_token": token})
-        page = self.client.get("/security").text
+        page = self.client.get("/compte").text
         secret = re.search(r'secret=([A-Z2-7]+)', page).group(1)
         token = self._csrf_from(page)
         res = self.client.post(
@@ -451,7 +461,7 @@ class TestTwoFactor(ApiTestBase):
             data={"code": self._current_code(secret), "csrf_token": token},
         )
         self.assertEqual(res.status_code, 303)
-        self.assertIn("Activée", self.client.get("/security").text)
+        self.assertIn("Activée", self.client.get("/compte").text)
         self.client.post("/logout", data={"csrf_token": self.page_csrf()})
         return secret
 
@@ -495,13 +505,13 @@ class TestTwoFactor(ApiTestBase):
         )
 
         # Mauvais mot de passe -> 2FA reste active.
-        token = self._csrf_from(self.client.get("/security").text)
+        token = self._csrf_from(self.client.get("/compte").text)
         self.client.post("/security/disable",
                          data={"current_password": "wrong", "csrf_token": token})
         self.assertTrue(store.is_enabled("jeremy"))
 
         # Bon mot de passe -> désactivée.
-        token = self._csrf_from(self.client.get("/security").text)
+        token = self._csrf_from(self.client.get("/compte").text)
         self.client.post("/security/disable",
                          data={"current_password": "owner-pw", "csrf_token": token})
         self.assertFalse(store.is_enabled("jeremy"))
@@ -1977,9 +1987,9 @@ class TestBackupsPage(ApiTestBase):
         self.login("jeremy", "owner-pw")
         page = self.client.get("/backups").text
         self.assertIn('id="profileDialog"', page)
-        self.assertIn("Comment veux-tu l'appeler", page)
-        self.assertIn("Où veux-tu la ranger", page)
-        self.assertIn("Que veux-tu protéger", page)
+        self.assertIn("Comment l'appeler", page)
+        self.assertIn("Où la ranger", page)
+        self.assertIn("Que faut-il protéger", page)
         self.assertIn("À quelle fréquence", page)
         self.assertIn("Combien de temps garder", page)
         self.assertIn('name="include"', page)
@@ -3647,3 +3657,44 @@ class TestPolishUi(ApiTestBase):
         page = self.client.get("/").text
         self.assertIn('id="navBurger"', page)
         self.assertIn('aria-expanded="false"', page)
+
+
+class TestNomDeCompte(ApiTestBase):
+    """Longueur des identifiants : alignée sur les pseudos Minecraft (3 à 16),
+    choix de Jeremy le 22/08/2026 — c'est la convention que connaissent les
+    utilisateurs de l'outil."""
+
+    def setUp(self):
+        super().setUp()
+        self.login("jeremy", "owner-pw")
+
+    def _creer(self, username: str):
+        return self.client.post("/actions/users/add", data={
+            "username": username, "password": "motdepasse-solide",
+            "role": "friend", "csrf_token": self.page_csrf()})
+
+    def test_seize_caracteres_passent(self):
+        self._creer("PseudoMinecraf16")
+        self.assertIn("PseudoMinecraf16", self.app.state.users)
+
+    def test_dix_sept_sont_refuses(self):
+        self._creer("PseudoBeaucoupTropLong")
+        self.assertNotIn("PseudoBeaucoupTropLong", self.app.state.users)
+        self.assertIn("3 à 16", self.client.get("/users").text)
+
+    def test_un_compte_existant_plus_long_se_connecte_toujours(self):
+        """La limite s'applique à la CRÉATION, jamais à la connexion : une
+        installation plus ancienne peut porter des comptes de 32 caractères,
+        et personne ne doit se retrouver enfermé dehors par ce changement."""
+        long_nom = "CompteHeriteDeTrenteDeuxCarac"
+        self.password_overrides.set(long_nom, "plain:motdepasse-solide")
+        self.app.state.users[long_nom] = self.app.state.users["paul"].__class__(
+            username=long_nom, role=self.app.state.roles["admin"])
+        client = self.client.__class__(self.app)
+        token = self._csrf_from(client.get("/login").text)
+        res = client.post("/login", data={"username": long_nom,
+                                          "password": "motdepasse-solide",
+                                          "csrf_token": token},
+                          follow_redirects=False)
+        self.assertEqual(res.status_code, 303, "le compte hérité doit pouvoir se connecter")
+        self.assertEqual(client.get("/", follow_redirects=False).status_code, 200)

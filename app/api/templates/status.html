@@ -43,7 +43,7 @@
   <p>
     <strong>Mise à jour de mc-admin disponible</strong>
     <span class="badge ko">v{{ app_update.latest.version }}</span>
-    <span class="muted">— tu utilises la v{{ app_update.current_version }}</span>
+    <span class="muted">— version installée : v{{ app_update.current_version }}</span>
   </p>
   <button type="button" class="small" id="appUpdateOpen">Voir le détail</button>
 </div>
@@ -51,7 +51,7 @@
         aria-labelledby="appUpdateTitle">
   <div class="player-dialog-box">
     <h2 id="appUpdateTitle">mc-admin v{{ app_update.latest.version }}
-      <span class="muted">— tu utilises la v{{ app_update.current_version }}</span></h2>
+      <span class="muted">— version installée : v{{ app_update.current_version }}</span></h2>
     {% if app_update.latest.notes %}
     <div class="app-update-notes">{{ app_update.latest.notes | release_notes }}</div>
     {% endif %}

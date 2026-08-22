@@ -9,13 +9,13 @@
   </div>
   <h1>Bienvenue !</h1>
   <p class="muted">Première connexion : crée le compte administrateur.
-    Il aura tous les droits — tu pourras ajouter d'autres comptes ensuite.</p>
+    Il aura tous les droits — d'autres comptes pourront être ajoutés ensuite.</p>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   <form method="post" action="/setup">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Nom d'utilisateur
       <input name="username" autocomplete="username" required autofocus
-             pattern="[A-Za-z0-9_\-]{3,32}" maxlength="32">
+             pattern="[A-Za-z0-9_\-]{3,16}" maxlength="16">
     </label>
     <label>Mot de passe
       <input type="password" name="password" autocomplete="new-password" minlength="8" required>

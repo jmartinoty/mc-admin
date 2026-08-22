@@ -1,0 +1,166 @@
+{% extends "shell.html" %}
+{% block page %}
+<h1>Mon compte</h1>
+
+{#
+  Trois onglets plutôt que quatre sections empilées (demande de Jeremy,
+  22/08/2026). Le mot de passe rejoint la double authentification : ce sont
+  deux facettes du même sujet, et les séparer aurait donné deux onglets
+  presque vides.
+
+  Comme sur la fiche joueur, le gabarit rend tous les panneaux : c'est le
+  script partagé (shell.js) qui masque les inactifs. Sans JavaScript, la page
+  reste lisible d'un bloc.
+#}
+<div class="pd-body" data-tabs>
+<nav class="tabs" aria-label="Sections du compte">
+  <a class="tab" href="#profil">Profil</a>
+  <a class="tab" href="#securite">Sécurité</a>
+  <a class="tab" href="#appareils">Appareils{% if sessions %} <span class="tab-count">{{ sessions | length }}</span>{% endif %}</a>
+</nav>
+
+<div class="tab-panel" id="profil">
+<section class="card" id="identite">
+  <h2>Identité</h2>
+  <p class="muted rules-hint">Le nom affiché est purement cosmétique : les
+    droits et le journal d'audit restent attachés à l'identifiant
+    <span class="mono">{{ user.username }}</span>.</p>
+  <form method="post" action="/actions/display-name" class="account-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="redirect_to" value="/compte">
+    <label class="account-label" for="displayName">Nom affiché</label>
+    <div class="account-row">
+      <input id="displayName" name="display_name" value="{{ display_name }}"
+             maxlength="32" placeholder="{{ user.username }}" autocomplete="off">
+      <button class="small">Enregistrer</button>
+    </div>
+  </form>
+  <p class="muted rules-hint">Rôle : <b>{{ role_label(user.role.name) }}</b> —
+    seul un propriétaire peut le modifier, depuis la page Comptes.</p>
+</section>
+
+</div>
+
+<div class="tab-panel" id="securite">
+<section class="card" id="motdepasse">
+  <h2>Mot de passe</h2>
+  <form method="post" action="/actions/password" class="account-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="redirect_to" value="/compte">
+    <label class="account-label" for="currentPw">Mot de passe actuel</label>
+    <input id="currentPw" type="password" name="current_password"
+           autocomplete="current-password" required>
+    <label class="account-label" for="newPw">Nouveau mot de passe</label>
+    <div class="account-row">
+      <input id="newPw" type="password" name="new_password" placeholder="8 caractères minimum"
+             autocomplete="new-password" minlength="8" required>
+      <button class="small">Changer</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Double authentification</h2>
+  <p class="muted rules-hint">Un code à usage unique, généré par une application
+    d'authentification (Google Authenticator, Aegis, FreeOTP…), demandé en plus
+    du mot de passe à chaque connexion.</p>
+
+  {% if twofa_enabled %}
+  <p><span class="chip ok">Activée</span> Ce compte demande un code à la connexion.</p>
+  <form method="post" action="/security/disable" class="account-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <p class="muted">La désactivation demande une confirmation par mot de passe.</p>
+    <div class="account-row">
+      <input type="password" name="current_password" placeholder="Mot de passe actuel"
+             autocomplete="current-password" required>
+      <button class="small danger">Désactiver</button>
+    </div>
+  </form>
+
+  {% elif twofa_pending %}
+  <ol class="rules-hint muted">
+    <li>Ajouter ce compte dans l'application d'authentification : scanner le QR
+      (si l'application le permet depuis le lien ci-dessous) ou saisir la clé
+      manuellement.</li>
+    <li>Saisir le code à 6 chiffres affiché pour confirmer.</li>
+  </ol>
+  <p><b>Clé secrète</b> : <span class="mono">{{ twofa_secret }}</span></p>
+  <details class="po-acc">
+    <summary class="po-item">Lien otpauth (avancé)</summary>
+    <p class="mono" style="word-break:break-all">{{ twofa_uri }}</p>
+  </details>
+  <form method="post" action="/security/enable" class="account-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="account-row">
+      <input name="code" inputmode="numeric" autocomplete="one-time-code"
+             pattern="[0-9]{6}" maxlength="6" placeholder="Code à 6 chiffres" required>
+      <button class="small">Confirmer et activer</button>
+    </div>
+  </form>
+  <form method="post" action="/security/cancel">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="txtbtn">Annuler la configuration</button>
+  </form>
+
+  {% else %}
+  <p><span class="chip">Désactivée</span></p>
+  <form method="post" action="/security/start">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="small">Activer la double authentification</button>
+  </form>
+  {% endif %}
+</section>
+
+</div>
+
+<div class="tab-panel" id="appareils">
+<section class="card">
+  <h2>Appareils connectés</h2>
+  <p class="muted rules-hint">Les appareils et navigateurs actuellement
+    connectés à ce compte. Une connexion non reconnue peut être déconnectée
+    d'ici.</p>
+
+  {% if sessions %}
+  <div class="table-wrap">
+    <table class="audit">
+      <caption class="sr-only">Sessions ouvertes</caption>
+      <thead><tr><th>Appareil</th><th>Adresse</th><th>Dernière activité</th><th></th></tr></thead>
+      <tbody>
+        {% for s in sessions %}
+        <tr>
+          <td><b>{{ s.device }}</b>
+            {% if s.current %}<span class="chip manual">cet appareil</span>{% endif %}
+            <div class="muted">connecté {{ s.created }}</div>
+          </td>
+          <td class="mono">{{ s.ip }}</td>
+          <td>{{ s.last_seen }}</td>
+          <td class="backup-acts">
+            <form method="post" action="/actions/sessions/revoke" class="js-confirm-form"
+                  data-confirm="{% if s.current %}Se déconnecter de cet appareil ?{% else %}Déconnecter cet appareil ({{ s.device }}) ?{% endif %}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="sid" value="{{ s.sid }}">
+              <button type="button" class="txtbtn danger-link js-confirm-open">
+                {% if s.current %}Se déconnecter{% else %}Déconnecter{% endif %}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if sessions|length > 1 %}
+  <form method="post" action="/actions/sessions/revoke-others" class="js-confirm-form"
+        data-confirm="Déconnecter tous les autres appareils ? Seul celui-ci restera connecté.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="button" class="small js-confirm-open">Déconnecter tous les autres appareils</button>
+  </form>
+  {% endif %}
+  {% else %}
+  <p class="muted">Aucune session à afficher.</p>
+  {% endif %}
+</section>
+</div>
+</div>
+{% endblock %}

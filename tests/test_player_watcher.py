@@ -87,6 +87,36 @@ class TestPlayerLogWatcherSynchronous(unittest.TestCase):
         self.assertEqual([p for p, _ in self.history.joins], ["alice", "bob"])
 
 
+    def test_detecte_la_rotation_du_journal(self):
+        """Minecraft archive latest.log chaque nuit et repart d'un fichier
+        vide. Sans détection, le tailer cherchait à lire au-delà de la fin du
+        nouveau fichier et restait aveugle jusqu'à ce qu'il dépasse l'ancienne
+        taille — c'est ainsi qu'un « left the game » a été manqué le
+        22/08/2026, laissant un joueur en ligne pendant plus d'un jour."""
+        self._write("[10:00:00] [Server thread/INFO]: " + "x" * 500 + "\n")
+        watcher = self._watcher()
+        position = watcher._initial_position()
+        self.assertGreater(position, 500)
+
+        # Rotation : le fichier est remplacé par un nouveau, bien plus court.
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write("[00:01:00] [Server thread/INFO]: alice joined the game\n")
+
+        watcher._consume_new_lines(position)
+        self.assertEqual([j[0] for j in self.history.joins], ["alice"],
+                         "la ligne écrite après la rotation doit être lue")
+
+    def test_apres_rotation_la_lecture_reprend_normalement(self):
+        watcher = self._watcher()
+        position = watcher._initial_position()
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write("[00:01:00] [Server thread/INFO]: alice joined the game\n")
+        position = watcher._consume_new_lines(position)
+        self._write("[00:02:00] [Server thread/INFO]: alice left the game\n")
+        watcher._consume_new_lines(position)
+        self.assertEqual([leave[0] for leave in self.history.leaves], ["alice"])
+
+
 class TestNotificationCooldown(unittest.TestCase):
     """Anti-spam : un même joueur = une notification max par fenêtre de
     cooldown ; l'historique, lui, enregistre TOUT."""

@@ -100,8 +100,26 @@ class PlayerLogWatcher:
             return 0
 
     def _consume_new_lines(self, position: int) -> int:
+        """Lit ce qui a été ajouté depuis `position` et rend la nouvelle.
+
+        DÉTECTE LA ROTATION (bug constaté le 22/08/2026) : Minecraft archive
+        `latest.log` chaque nuit et à chaque redémarrage, puis repart d'un
+        fichier vide. Sans ce contrôle, on cherchait à lire à l'octet 96 000
+        d'un fichier qui n'en faisait plus que 5 000 : aucune ligne n'était
+        lue, la position ne bougeait pas, et le tailer restait AVEUGLE
+        jusqu'à ce que le nouveau fichier dépasse l'ancienne taille — des
+        heures, parfois. C'est ainsi qu'un « left the game » a été manqué,
+        laissant un joueur affiché en ligne pendant plus d'un jour.
+
+        Un fichier plus court que notre position ne peut être que le signe
+        d'une rotation ou d'une troncature : on repart du début, car ce
+        début est du contenu neuf, jamais vu."""
         try:
             with open(self._path, encoding="utf-8", errors="replace") as fh:
+                fh.seek(0, 2)
+                taille = fh.tell()
+                if taille < position:
+                    position = 0
                 fh.seek(position)
                 for line in fh:
                     self._handle_line(line)
