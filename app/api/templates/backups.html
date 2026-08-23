@@ -146,7 +146,7 @@
         <label>Garder <input name="retention_daily_days" id="profileDays" type="number" min="0" max="365" value="0" class="mini-number"> jours</label>
         <label>+ <input name="retention_monthly_months" id="profileMonths" type="number" min="0" max="120" value="0" class="mini-number"> mensuelles</label>
       </div>
-      <p class="muted wizard-help">Laisse 0 pour tout garder sans limite. Au-delà, les plus vieilles copies sont supprimées automatiquement.</p>
+      <p class="muted wizard-help">Laisser 0 pour tout garder sans limite. Au-delà, les plus vieilles copies sont supprimées automatiquement.</p>
     </section>
 
     <div class="dialog-actions">
@@ -182,7 +182,7 @@
       </p>
       <p class="muted">
         {% if storage_saturation %}Au rythme actuel, le volume serait plein vers le
-          <b>{{ storage_saturation.strftime("%d/%m/%Y") }}</b> — pense à faire de la place ou agrandir le volume.
+          <b>{{ storage_saturation.strftime("%d/%m/%Y") }}</b> — penser à faire de la place ou à agrandir le volume.
         {% else %}Occupation stable ou en baisse sur la période suivie — pas de saturation prévisible.{% endif %}
       </p>
     </div>

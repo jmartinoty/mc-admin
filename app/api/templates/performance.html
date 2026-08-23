@@ -6,7 +6,7 @@
 {% if perf is none %}
 <section class="card">
   <h2>Mesures indisponibles</h2>
-  {{ degraded("Les mesures de performance (TPS, MSPT, entités, chunks) ne sont pas disponibles pour le moment. Recharge la page dans un instant.", "SUR-90") }}
+  {{ degraded("Les mesures de performance (TPS, MSPT, entités, chunks) ne sont pas disponibles pour le moment. Recharger la page dans un instant.", "SUR-90") }}
 </section>
 {% else %}
 
@@ -174,9 +174,9 @@
   </form>
   <p class="muted rules-hint">À lancer pendant que ça rame (avec des joueurs
     connectés) : le profil dit précisément quel chunk, quelle entité ou quel
-    mod consomme le tick. Ouvre ensuite
+    mod consomme le tick. Ouvrir ensuite
     <a href="https://spark.lucko.me" target="_blank" rel="noopener">spark.lucko.me ↗</a>
-    et glisse-y le fichier téléchargé.</p>
+    et y déposer le fichier téléchargé.</p>
   {% endif %}
   {% if spark_profiles %}
   <div class="table-wrap">

@@ -6,6 +6,8 @@ les boutons selon le rôle (UX uniquement).
 """
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 
 from fastapi import HTTPException, Request
@@ -187,9 +189,23 @@ def _require_csrf(request: Request, token: str) -> None:
         raise HTTPException(status_code=400, detail="Jeton CSRF invalide")
 
 
+# Un chemin de retour acceptable : INTERNE et rien d'autre. La règle protège
+# de la redirection ouverte (envoyer l'utilisateur vers un site tiers) sans
+# énumérer les pages — une liste en dur se périme à chaque page ajoutée. C'est
+# ce qui s'était produit : elle n'en contenait que 9 sur une vingtaine, si bien
+# que fermer le bandeau d'activité depuis la Carte ou la Surveillance renvoyait
+# l'utilisateur sur les Sauvegardes (constaté par Jeremy le 23/08/2026), et
+# elle citait encore /sessions, fusionnée la veille dans /compte.
+#
+# Refusés : « //evil.tld » (URL sans schéma, donc EXTERNE), « http://… »,
+# les antislashs (que certains navigateurs assimilent à « / ») et tout
+# caractère hors du jeu attendu d'un chemin.
+_CHEMIN_INTERNE = re.compile(r"^/(?!/)[A-Za-z0-9/_.-]{0,120}$")
+
+
 def _redirect_target(value: str, default: str) -> str:
-    allowed = {"/", "/players", "/whitelist", "/op", "/bans", "/backups", "/audit", "/game", "/sessions"}
-    return value if value in allowed else default
+    value = (value or "").strip()
+    return value if _CHEMIN_INTERNE.match(value) else default
 
 
 def _nav_context(request: Request, user, active: str) -> dict:

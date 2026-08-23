@@ -4,6 +4,26 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.21.0 — 2026-08-23
+
+### Carte
+
+- **Les joueurs se déplacent enfin en direct.** BlueMap suit les joueurs par un
+  flux permanent, que le relais de mc-admin interrompait au bout de dix
+  secondes et retenait en mémoire tampon : les positions restaient figées
+  jusqu'au rechargement de la page. Les flux sont désormais relayés au fil de
+  l'eau.
+
+### Corrections
+
+- La croix qui ferme le bandeau d'activité ramenait à la page des Sauvegardes
+  au lieu de laisser sur la page courante. Elle transmettait pourtant la bonne
+  destination : c'est le contrôle de sécurité qui la rejetait, faute de
+  connaître toutes les pages. Il vérifie maintenant la forme de l'adresse, ce
+  qui protège autant sans jamais se périmer.
+- Une vingtaine de formulations tutoyaient encore, dont le message affiché
+  pendant la mise à jour de l'application.
+
 ## v0.20.0 — 2026-08-23
 
 ### Surveillance

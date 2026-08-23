@@ -22,6 +22,19 @@ from collections.abc import Iterator
 
 _CHUNK = 64 * 1024
 
+# BlueMap 5 suit les joueurs par un FLUX d'événements permanent (SSE) et non
+# par des requêtes périodiques : `…/live/sse` reste ouvert et n'émet que
+# lorsqu'un joueur bouge. Deux réglages parfaits pour des fichiers le tuaient
+# (constaté le 23/08/2026, joueurs figés jusqu'au rechargement de la page) :
+# le délai d'attente coupait la connexion au premier silence, et la lecture
+# par blocs de 64 Kio retenait des événements de quelques dizaines d'octets.
+# Un flux se relaie donc sans délai d'attente et ligne par ligne.
+_SUFFIXE_FLUX = "live/sse"
+
+
+def _est_flux(path: str) -> bool:
+    return (path or "").rstrip("/").endswith(_SUFFIXE_FLUX)
+
 
 class MapUnreachable(Exception):
     """Carte injoignable ou chemin refusé (verdict en langage utilisateur)."""
@@ -103,12 +116,19 @@ def open_map_path(base_url: str, path: str, query: str = "",
     Au pire, une tuile fraîchement rendue apparaît avec une minute de
     retard."""
     open_fn = opener or urllib.request.urlopen
+    flux = _est_flux(path)
+    if flux:
+        # Sans délai d'attente : le silence est NORMAL sur un flux, il ne veut
+        # pas dire que la carte est injoignable.
+        timeout = None
     request = urllib.request.Request(_resolve(base_url, path, query))
     if if_none_match:
         request.add_header("If-None-Match", if_none_match)
     if if_modified_since:
         request.add_header("If-Modified-Since", if_modified_since)
-    gzip_ok = "gzip" in accept_encoding.lower()
+    # Jamais de compression sur un flux : elle réintroduirait exactement la
+    # mise en tampon qu'on cherche à supprimer.
+    gzip_ok = (not flux) and "gzip" in accept_encoding.lower()
     if gzip_ok:
         request.add_header("Accept-Encoding", "gzip")
     try:
@@ -135,7 +155,9 @@ def open_map_path(base_url: str, path: str, query: str = "",
     def chunks() -> Iterator[bytes]:
         try:
             while True:
-                block = res.read(_CHUNK)
+                # Un flux se lit LIGNE PAR LIGNE : le protocole SSE est
+                # découpé ainsi, et chaque ligne doit partir aussitôt.
+                block = res.readline() if flux else res.read(_CHUNK)
                 if not block:
                     break
                 yield block

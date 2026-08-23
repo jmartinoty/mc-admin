@@ -76,7 +76,7 @@ class UpdateMixin:
             self._record(user, Permission.UPDATE, "denied",
                          "bloqué : serveur en maintenance (le portier occupe son adresse)")
             raise UpdateUnavailable(
-                "Le serveur est en maintenance : rouvre-le avant de lancer la "
+                "Le serveur est en maintenance : le rouvrir avant de lancer la "
                 "mise à jour (le portier occupe son adresse réseau)."
             )
 
@@ -258,13 +258,13 @@ class UpdateMixin:
         # _port_running(None) levait RestoreUnavailable sans trace).
         busy = ""
         if self._restore_in_progress():
-            busy, message = "restauration-en-cours", "une restauration est en cours — réessaie quand elle est terminée"
+            busy, message = "restauration-en-cours", "une restauration est en cours — réessayer une fois terminée"
         elif self._profile_backup is not None:
             try:
                 if self._profile_backup.is_running():
-                    busy, message = "sauvegarde-en-cours", "une sauvegarde est en cours — réessaie quand elle est terminée"
+                    busy, message = "sauvegarde-en-cours", "une sauvegarde est en cours — réessayer une fois terminée"
             except Exception:  # noqa: BLE001 — état inconnu = prudence
-                busy, message = "etat-sauvegarde-illisible", "l'état des sauvegardes est illisible — réessaie dans un instant"
+                busy, message = "etat-sauvegarde-illisible", "l'état des sauvegardes est illisible — réessayer dans un instant"
         if busy:
             self._record(user, Permission.UPDATE, "denied",
                          f"phase=app_update_blocked raison={busy}")

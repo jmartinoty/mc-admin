@@ -93,7 +93,7 @@
     <h1 class="srv-name">Serveur injoignable</h1>
     <span class="pill bad"><span class="led"></span>hors de portée</span>
   </div>
-  {{ degraded("mc-admin n'arrive pas à joindre le serveur. Vérifie qu'il est démarré et bien renseigné dans la page Serveurs.", "SRV-90") }}
+  {{ degraded("mc-admin n'arrive pas à joindre le serveur. Vérifier qu'il est démarré et bien renseigné dans la page Serveurs.", "SRV-90") }}
 </section>
 {% else %}
 {% set running = status.container.running %}
@@ -588,7 +588,7 @@
   if (chip && navigator.clipboard) {
     chip.addEventListener("click", function () {
       navigator.clipboard.writeText(chip.getAttribute("data-address")).then(function () {
-        window.mc && window.mc.toast && window.mc.toast("Adresse copiée — colle-la dans Minecraft.");
+        window.mc && window.mc.toast && window.mc.toast("Adresse copiée — à coller dans Minecraft.");
       });
     });
   }

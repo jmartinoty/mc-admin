@@ -18,6 +18,9 @@ class _FakeResponse:
     def read(self, n=-1):
         return self._buf.read(n)
 
+    def readline(self):
+        return self._buf.readline()
+
     def close(self):
         self.closed = True
 
@@ -168,3 +171,64 @@ class TestOpenMapPath(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFluxEvenements(unittest.TestCase):
+    """BlueMap 5 suit les joueurs par un flux d'événements permanent (SSE).
+
+    Deux réglages parfaits pour des fichiers le tuaient (constaté le
+    23/08/2026 : joueurs figés jusqu'au rechargement de la page) — le délai
+    d'attente coupait la connexion au premier silence, et la lecture par blocs
+    de 64 Kio retenait des événements de quelques dizaines d'octets.
+    """
+
+    CHEMIN = "maps/old_world_1/live/sse"
+    EVENEMENTS = b'event: playerData\ndata: {"x":1}\n\nevent: playerData\ndata: {"x":2}\n\n'
+
+    def _capture(self, chemin, corps=b"x" * 10, type_contenu="text/html",
+                 accept_encoding="gzip"):
+        vu = {}
+
+        def opener(request, timeout=None):
+            vu["timeout"] = timeout
+            vu["accept_encoding"] = request.get_header("Accept-encoding", "")
+            return _FakeResponse(body=corps, content_type=type_contenu)
+
+        status, headers, chunks = open_map_path(
+            "http://minecraft:8100", chemin, "", opener=opener,
+            accept_encoding=accept_encoding)
+        return vu, status, headers, list(chunks)
+
+    def test_un_flux_n_a_pas_de_delai_d_attente(self):
+        """Le silence est NORMAL sur un flux : il ne signifie pas que la carte
+        est injoignable."""
+        vu, _s, _h, _c = self._capture(self.CHEMIN, self.EVENEMENTS, "text/event-stream")
+        self.assertIsNone(vu["timeout"])
+
+    def test_un_fichier_garde_son_delai_d_attente(self):
+        vu, _s, _h, _c = self._capture("assets/app.js")
+        self.assertIsNotNone(vu["timeout"])
+        self.assertGreater(vu["timeout"], 0)
+
+    def test_un_flux_est_relaye_ligne_par_ligne(self):
+        """Chaque ligne doit partir aussitôt : avec des blocs de 64 Kio, des
+        événements de quelques octets ne sortaient jamais."""
+        _vu, _s, _h, morceaux = self._capture(
+            self.CHEMIN, self.EVENEMENTS, "text/event-stream")
+        self.assertGreater(len(morceaux), 1, "le flux doit sortir en plusieurs morceaux")
+        self.assertTrue(all(m.endswith(b"\n") for m in morceaux),
+                        "chaque morceau doit être une ligne complète")
+        self.assertEqual(b"".join(morceaux), self.EVENEMENTS)
+
+    def test_un_fichier_reste_lu_par_blocs(self):
+        _vu, _s, _h, morceaux = self._capture("assets/app.js", b"a" * 100)
+        self.assertEqual(morceaux, [b"a" * 100])
+
+    def test_un_flux_n_est_jamais_compresse(self):
+        """La compression réintroduirait la mise en tampon qu'on supprime."""
+        vu, _s, _h, _c = self._capture(self.CHEMIN, self.EVENEMENTS, "text/event-stream")
+        self.assertEqual(vu["accept_encoding"], "")
+
+    def test_un_fichier_reste_compresse(self):
+        vu, _s, _h, _c = self._capture("maps/world/tile.prbm")
+        self.assertIn("gzip", vu["accept_encoding"].lower())

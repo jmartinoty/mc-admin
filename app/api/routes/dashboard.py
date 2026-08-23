@@ -216,7 +216,7 @@ def action_app_update_snooze(request: Request, csrf_token: str = Form(...)):
     _require_csrf(request, csrf_token)
     try:
         request.app.state.service.snooze_app_update(user)
-        request.session["flash"] = "D'accord, je te le rappellerai demain."
+        request.session["flash"] = "Rappel reporté à demain."
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except DomainError as exc:
@@ -737,7 +737,7 @@ def action_server_add(
             user, name, container, rcon_host, int(rcon_port), world_dir)
         if was_empty:
             request.session["flash"] = (
-                f"« {entry.name} » enregistré — redémarre mc-admin pour le prendre en main."
+                f"« {entry.name} » enregistré — redémarrer mc-admin pour le prendre en compte."
             )
         else:
             request.session["flash"] = (
@@ -954,7 +954,7 @@ def _send_channel_test(svc, user, channel: dict) -> str:
     try:
         target.notify("Test mc-admin", f"Canal « {channel['label']} » opérationnel 🎉", "info")
         svc.record_notification_test(user, channel["id"], ok=True)
-        return f"Message de test envoyé sur « {channel['label']} » — vérifie qu'il est arrivé."
+        return f"Message de test envoyé sur « {channel['label']} » — vérifier qu'il est bien arrivé."
     except Exception as exc:  # noqa: BLE001 — l'échec du test EST l'information
         svc.record_notification_test(user, channel["id"], ok=False)
         return f"Échec du test « {channel['label']} » : {_explain_channel_error(exc)}"
@@ -1030,7 +1030,7 @@ def action_detect_chats(request: Request, bot_token: str = Form(""), csrf_token:
     from fastapi.responses import JSONResponse
     bot_token = bot_token.strip()
     if not bot_token:
-        return JSONResponse({"error": "Renseigne d'abord le jeton du bot."})
+        return JSONResponse({"error": "Renseigner d'abord le jeton du bot."})
     import urllib.error
     from adapters.notifications import telegram_detect_chats
     try:
@@ -1043,7 +1043,7 @@ def action_detect_chats(request: Request, bot_token: str = Form(""), csrf_token:
         return JSONResponse({"error": "Échec : Telegram injoignable depuis le serveur."})
     if not chats:
         return JSONResponse({"error": "Aucun chat vu par ce bot — envoyer /start au bot "
-                                      "(ou ajoute-le au groupe) puis re-clique."})
+                                      "(ou l'ajouter au groupe), puis relancer la détection."})
     return JSONResponse({"chats": chats})
 
 
@@ -1304,7 +1304,7 @@ def action_spark_stop(request: Request, csrf_token: str = Form(...)):
     _require_csrf(request, csrf_token)
     try:
         request.app.state.service.stop_spark_profile(user)
-        request.session["flash"] = "Profil sauvegardé — télécharge-le puis glisse-le sur spark.lucko.me."
+        request.session["flash"] = "Profil sauvegardé — le télécharger, puis le déposer sur spark.lucko.me."
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except DomainError as exc:
