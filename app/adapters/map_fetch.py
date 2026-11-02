@@ -28,8 +28,21 @@ _CHUNK = 64 * 1024
 # (constaté le 23/08/2026, joueurs figés jusqu'au rechargement de la page) :
 # le délai d'attente coupait la connexion au premier silence, et la lecture
 # par blocs de 64 Kio retenait des événements de quelques dizaines d'octets.
-# Un flux se relaie donc sans délai d'attente et ligne par ligne.
+# Un flux se relaie donc ligne par ligne, avec un délai d'attente LONG.
 _SUFFIXE_FLUX = "live/sse"
+
+# …mais jamais sans délai du tout. Le relais lit le flux dans un thread du
+# pool de l'application (40 en tout, partagés avec toutes les pages), et un
+# thread bloqué en lecture ne peut pas être interrompu : quand le navigateur
+# ferme l'onglet, le thread reste pris jusqu'au prochain événement de BlueMap.
+# Or BlueMap se tait tant que personne ne bouge (mesuré le 02/11/2026 :
+# aucune ligne en 150 s, serveur vide) — chaque onglet carte fermé gardait
+# donc un thread, et 40 fermetures figeaient toute l'interface. Après ce
+# silence, le relais termine proprement le flux : l'EventSource de BlueMap
+# repasse brièvement en interrogation périodique puis se reconnecte seul
+# (comportement lu dans son code). Un onglet fermé libère ainsi son thread
+# en 30 s au plus.
+_SILENCE_FLUX_SECONDES = 30.0
 
 
 def _est_flux(path: str) -> bool:
@@ -91,6 +104,7 @@ def open_map_path(base_url: str, path: str, query: str = "",
                   timeout: float = 10.0, opener=None,
                   if_none_match: str = "", if_modified_since: str = "",
                   accept_encoding: str = "",
+                  silence_flux: float = _SILENCE_FLUX_SECONDES,
                   ) -> tuple[int, dict[str, str], Iterator[bytes]]:
     """Ouvre un fichier de la carte : (status, en-têtes à relayer, chunks).
 
@@ -118,9 +132,9 @@ def open_map_path(base_url: str, path: str, query: str = "",
     open_fn = opener or urllib.request.urlopen
     flux = _est_flux(path)
     if flux:
-        # Sans délai d'attente : le silence est NORMAL sur un flux, il ne veut
-        # pas dire que la carte est injoignable.
-        timeout = None
+        # Le silence est NORMAL sur un flux : il ne veut pas dire que la carte
+        # est injoignable — il met seulement fin à ce flux-ci (cf. plus haut).
+        timeout = silence_flux
     request = urllib.request.Request(_resolve(base_url, path, query))
     if if_none_match:
         request.add_header("If-None-Match", if_none_match)
@@ -157,7 +171,12 @@ def open_map_path(base_url: str, path: str, query: str = "",
             while True:
                 # Un flux se lit LIGNE PAR LIGNE : le protocole SSE est
                 # découpé ainsi, et chaque ligne doit partir aussitôt.
-                block = res.readline() if flux else res.read(_CHUNK)
+                try:
+                    block = res.readline() if flux else res.read(_CHUNK)
+                except TimeoutError:
+                    if not flux:
+                        raise
+                    break  # silence prolongé : fin propre, BlueMap se reconnecte
                 if not block:
                     break
                 yield block

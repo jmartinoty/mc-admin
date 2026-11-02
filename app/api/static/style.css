@@ -1034,12 +1034,50 @@ table.audit td { padding: .65rem .7rem; border-bottom: 1px solid var(--border-so
 .perf-marker-restart { color: var(--info); }
 .perf-marker-update { color: var(--warning); }
 .perf-marker line, .perf-marker circle { stroke: currentColor; fill: currentColor; }
+/* Courbe joueurs : sous la courbe MSPT, discrète — c'est du contexte, pas le
+   sujet. Sa propre échelle (0 -> pic de la fenêtre) est annoncée sous l'axe. */
+/* GRIS, pas --info : les repères « Redémarrage » sont déjà bleus sur ce même
+   graphe — deux bleus pour deux informations différentes tromperaient. Le
+   gris assume le statut de la courbe : du contexte, pas le sujet. Opacité
+   .75 : à .55 elle disparaissait presque en thème clair (~1,9:1). */
+.perf-chart .perf-players { fill: none; stroke: var(--muted); stroke-width: 1.5; opacity: .75; }
+.perf-players-chip { color: var(--muted); }
+.perf-axis-joueurs { justify-content: flex-end; gap: .3rem; }
+.perf-incidents { margin-top: .6rem; }
+.perf-incidents h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 .3rem; }
+.perf-incidents ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .35rem .9rem; }
+.perf-incidents a { font-family: var(--mono); font-size: .8rem; }
+.perf-incident-actif { color: var(--warning); }
+/* --- Défilement du graphe MSPT (ajouté par perf-chart.js) --- */
+/* `pan-y` : un doigt fait défiler le GRAPHE horizontalement sans confisquer
+   le défilement VERTICAL de la page — confisquer les deux rendrait la page
+   impraticable au téléphone. Le zoom passe alors par les boutons de plage. */
+.perf-interactif .perf-chart { touch-action: pan-y; cursor: grab; }
+.perf-interactif.perf-glisse .perf-chart { cursor: grabbing; }
+/* Cliquer pour glisser ne doit pas laisser l'anneau de focus du navigateur
+   (un cadre bleu autour du graphe) ; la navigation au CLAVIER, elle, doit
+   rester visible — d'où :focus-visible seul. */
+.perf-interactif .perf-chart:focus { outline: none; }
+.perf-interactif .perf-chart:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Pendant un rechargement on ATTÉNUE sans vider : une image un peu pâle reste
+   plus honnête qu'un graphe vide, qui se lirait comme « aucune mesure ». */
+.perf-chargement { opacity: .55; transition: opacity .12s ease; }
+.perf-muet { opacity: .35; }
+.perf-nav { display: flex; align-items: center; gap: .5rem; margin-bottom: .35rem; flex-wrap: wrap; }
+.perf-nav button[disabled] { opacity: .35; cursor: default; }
+.perf-periode { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
+.perf-present { margin-left: auto; }
 .perf-legend { margin-top: .4rem; font-size: .8rem; }
 .perf-legend-chip { display: inline-block; }
 .perf-legend .perf-marker-backup, .perf-legend .perf-marker-restart, .perf-legend .perf-marker-update { font-size: .9rem; }
 .perf-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
 @media (max-width: 900px) { .perf-cols { grid-template-columns: 1fr; } }
 .perf-worlds { display: flex; flex-direction: column; gap: .8rem; }
+/* Les règles des sparklines étaient écrites pour les tuiles (.metric .spark) :
+   dans .perf-world, AUCUNE ne s'appliquait — polyline au rendu SVG par défaut,
+   remplie de noir (bug relevé par la review du 24/08). */
+.perf-world .spark { width: 100%; height: 28px; display: block; }
+.perf-world .spark polyline { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .perf-world-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: .25rem; }
 
 /* A2.1 : carte Infrastructure */
@@ -1343,3 +1381,11 @@ a.err-code-link:hover { color: var(--accent-strong); border-color: var(--accent)
 /* Pastille d'onglet signalant une panne EN COURS : elle doit se distinguer
    d'un simple décompte. */
 .tab-count.alerte { background: var(--danger); color: #fff; }
+
+/* Tuiles de mesure cliquables : elles mènent au détail (Performances, ou la
+   page Joueurs pour le décompte). Le repère visuel reste discret — une tuile
+   ne doit pas se déguiser en bouton. */
+.metric-lien { text-decoration: none; color: inherit; display: flex; flex-direction: column; }
+.metric-lien:hover { border-color: var(--accent); }
+.metric-lien:hover .metric-name { color: var(--accent-strong); }
+.metric-lien:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

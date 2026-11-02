@@ -4,7 +4,18 @@
 {# Maintenance — le bandeau est visible de TOUS (savoir que le serveur est
    volontairement fermé est une information, pas un privilège) ; seuls les
    boutons dépendent de la permission. #}
-{% if maintenance and maintenance.active %}
+{% if maintenance and maintenance.active and maintenance.restoring %}
+{# Le portier tient l'adresse pour une restauration (V7b) : pas de « Rouvrir »,
+   le serveur rouvre de lui-même à la fin de la transaction. #}
+<section class="card maintenance-card">
+  <div class="st-name">
+    <h2>🔧 Serveur fermé pendant une restauration</h2>
+    <span class="pill warn"><span class="led"></span>fermé</span>
+  </div>
+  <p class="muted">Le monde est en cours de remplacement. Le serveur rouvrira de
+    lui-même une fois la restauration terminée.</p>
+</section>
+{% elif maintenance and maintenance.active %}
 <section class="card maintenance-card">
   <div class="st-name">
     <h2>🔧 Serveur en maintenance</h2>
@@ -185,7 +196,13 @@
   {% if metrics %}
   <div class="metrics">
     {% for m in metrics %}
-    <div class="metric">
+    {# Chaque tuile mène là où la mesure se lit en détail (demande de Jeremy,
+       23/08/2026) : le nombre de joueurs vers leur page, les mesures de
+       ressources vers Performances. Un lien, pas un bouton : on peut l'ouvrir
+       dans un onglet, et il reste utilisable sans JavaScript. #}
+    {% set cible = "/players" if m.key == "players" else "/performance" %}
+    <a class="metric metric-lien" href="{{ cible }}"
+       title="Voir le détail : {{ m.label }}">
       <div class="metric-value">
         {% if m.value is not none %}
           {%- set dv = metric_display(m.value, m.unit) -%}
@@ -205,7 +222,7 @@
         <line x1="0" y1="24" x2="100" y2="24"/>
       </svg>
       {% endif %}
-    </div>
+    </a>
     {% endfor %}
   </div>
   {% elif metrics is none %}

@@ -62,6 +62,18 @@ class TestSessionRegistry(unittest.TestCase):
         self.assertFalse(reg.is_valid(other2, "jeremy"))
         self.assertTrue(reg.is_valid(elsewhere, "paul"))  # autre compte intact
 
+    def test_revoke_all_spares_no_session_of_that_account(self):
+        reg = self._registry()
+        first = reg.register("jeremy", "10.0.0.1", "ua")
+        second = reg.register("jeremy", "10.0.0.2", "ua")
+        elsewhere = reg.register("paul", "10.0.0.9", "ua")
+
+        self.assertEqual(reg.revoke_all("jeremy"), 2)
+        self.assertFalse(reg.is_valid(first, "jeremy"))
+        self.assertFalse(reg.is_valid(second, "jeremy"))
+        self.assertTrue(reg.is_valid(elsewhere, "paul"))  # autre compte intact
+        self.assertEqual(reg.revoke_all("jeremy"), 0)
+
     def test_list_for_is_scoped_and_sorted_by_last_seen(self):
         reg = self._registry()
         first = reg.register("jeremy", "10.0.0.1", "ua")

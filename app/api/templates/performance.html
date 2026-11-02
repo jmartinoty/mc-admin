@@ -16,12 +16,12 @@
     <div class="metric-label">TPS <span class="info-tip" tabindex="0" aria-label="Ticks par seconde — 20 = parfait. En dessous, le temps du jeu ralentit.">?<span class="tip-body">Ticks par seconde — 20 = parfait. En dessous, le temps du jeu ralentit.</span></span></div>
   </div>
   <div class="metric">
-    <div class="metric-value {{ 'perf-bad' if perf.mspt_mean is not none and perf.mspt_mean > alert_thresholds.mspt_threshold_ms }}">{% if perf.mspt_mean is not none %}{{ "%.1f"|format(perf.mspt_mean) }} <span class="unit">ms</span>{% else %}<span class="muted">–</span>{% endif %}</div>
-    <div class="metric-label">MSPT moyen <span class="info-tip" tabindex="0" aria-label="Durée moyenne d'un tick. Au-delà de {{ alert_thresholds.mspt_threshold_ms | int }} ms, le serveur ne tient plus 20 TPS.">?<span class="tip-body">Durée moyenne d'un tick. Au-delà de {{ alert_thresholds.mspt_threshold_ms | int }} ms, le serveur ne tient plus 20 TPS.</span></span></div>
+    <div class="metric-value {{ 'perf-bad' if perf.mspt_mean is not none and perf.mspt_mean > alert_thresholds.mspt_threshold_ms }}">{% if perf.mspt_mean is not none %}{{ pct_budget(perf.mspt_mean) }} <span class="unit">({{ "%.1f"|format(perf.mspt_mean) }} ms)</span>{% else %}<span class="muted">–</span>{% endif %}</div>
+    <div class="metric-label">du budget d'un tick <span class="info-tip" tabindex="0" aria-label="Le serveur dispose de 50 millisecondes par tick pour tenir 20 TPS. 100 % = la limite : au-delà, le jeu ralentit. La valeur passe en rouge dès le seuil d'alerte configuré.">?<span class="tip-body">Le serveur dispose de 50 ms par tick pour tenir 20 TPS. 100 % = la limite : au-delà, le jeu ralentit. La valeur passe en rouge dès le seuil d'alerte configuré.</span></span></div>
   </div>
   <div class="metric">
-    <div class="metric-value {{ 'perf-bad' if perf.mspt_max is not none and perf.mspt_max > alert_thresholds.mspt_threshold_ms }}">{% if perf.mspt_max is not none %}{{ "%.1f"|format(perf.mspt_max) }} <span class="unit">ms</span>{% else %}<span class="muted">–</span>{% endif %}</div>
-    <div class="metric-label">MSPT max</div>
+    <div class="metric-value {{ 'perf-bad' if perf.mspt_max is not none and perf.mspt_max > alert_thresholds.mspt_threshold_ms }}">{% if perf.mspt_max is not none %}{{ pct_budget(perf.mspt_max) }} <span class="unit">({{ "%.1f"|format(perf.mspt_max) }} ms)</span>{% else %}<span class="muted">–</span>{% endif %}</div>
+    <div class="metric-label">pire tick récent <span class="info-tip" tabindex="0" aria-label="Le tick le plus lent de la dernière mesure. Un dépassement isolé est rattrapé sans que personne ne le sente ; c'est sa répétition qui fait ramer.">?<span class="tip-body">Le tick le plus lent de la dernière mesure. Un dépassement isolé est rattrapé sans que personne ne le sente ; c'est sa répétition qui fait ramer.</span></span></div>
   </div>
   <div class="metric">
     <div class="metric-value">{% if perf.entities_total is not none %}{{ perf.entities_total }}{% else %}<span class="muted">–</span>{% endif %}</div>
@@ -32,8 +32,7 @@
 <section class="card">
   <div class="perf-head">
     <h2>MSPT
-      {% if mspt_chart and mspt_chart.over %}<span class="badge ko">seuil dépassé</span>
-      {% elif mspt_chart %}<span class="badge ok">sous le seuil</span>{% endif %}
+      {% if mspt_chart %}<span class="badge {{ 'ko' if mspt_chart.over else 'ok' }}" data-perf-badge>{{ 'seuil dépassé' if mspt_chart.over else 'sous le seuil' }}</span>{% endif %}
     </h2>
     <nav class="perf-ranges" aria-label="Plage du graphe MSPT">
       {% for key, label in perf_ranges %}
@@ -43,36 +42,81 @@
     </nav>
   </div>
   {% if mspt_chart %}
+  {#- Le gabarit rend un graphe COMPLET et lisible sans JavaScript : les liens
+      de plage ci-dessus suffisent. Le script y ajoute ensuite le glisser et le
+      zoom, en s'accrochant aux data-* ci-dessous. #}
+  <div class="perf-chart-wrap" data-perf-chart
+       data-url="/fragments/mspt.json"
+       data-debut="{{ mspt_chart.debut }}" data-fin="{{ mspt_chart.fin }}">
   <svg class="perf-chart" viewBox="0 0 600 140" preserveAspectRatio="none" role="img"
-       aria-label="Pire MSPT par fenêtre de {{ mspt_chart.window }}, seuil à {{ mspt_chart.threshold_ms | int }} millisecondes">
-    <line class="perf-threshold" x1="0" y1="{{ mspt_chart.threshold_y }}" x2="600" y2="{{ mspt_chart.threshold_y }}"/>
-    <polyline class="perf-line" points="{{ mspt_chart.points }}"/>
+       data-perf-svg
+       aria-label="Pire MSPT par fenêtre de {{ mspt_chart.window }}, seuil à {{ mspt_chart.threshold_ms | int }} millisecondes.{% if mspt_chart.joueurs %} Les joueurs en ligne sont tracés en arrière-plan, de 0 à {{ mspt_chart.joueurs_max }}.{% endif %}">
+    <line class="perf-threshold" data-perf-seuil vector-effect="non-scaling-stroke"
+          x1="0" y1="{{ mspt_chart.threshold_y }}" x2="600" y2="{{ mspt_chart.threshold_y }}"/>
+    <g data-perf-mobile>
+    {% for segment in mspt_chart.joueurs %}
+    <polyline class="perf-players" vector-effect="non-scaling-stroke" points="{{ segment }}"/>
+    {% endfor %}
+    {% for segment in mspt_chart.segments %}
+    <polyline class="perf-line" vector-effect="non-scaling-stroke" points="{{ segment }}"/>
+    {% endfor %}
     {% for m in mspt_chart.markers %}
     <g class="perf-marker perf-marker-{{ m.kind }}">
       <title>{{ m.label }} · {{ m.at }}</title>
-      <line x1="{{ m.x }}" y1="4" x2="{{ m.x }}" y2="136"/>
+      <line x1="{{ m.x }}" y1="4" x2="{{ m.x }}" y2="136" vector-effect="non-scaling-stroke"/>
       <circle cx="{{ m.x }}" cy="6" r="3"/>
     </g>
     {% endfor %}
+    </g>
   </svg>
-  <div class="perf-axis" aria-hidden="true">
+  <div class="perf-axis" aria-hidden="true" data-perf-axe>
     {% for t in mspt_chart.ticks %}<span>{{ t }}</span>{% endfor %}
   </div>
-  <p class="muted perf-legend">Pic : {{ mspt_chart.max }} ms · chaque point est le
-    pire moment de sa fenêtre de {{ mspt_chart.window }} — un à-coup ne peut pas se
-    cacher entre deux points · la ligne pointillée marque {{ mspt_chart.threshold_ms | int }} ms : au-dessus,
-    le serveur ralentit (moins de 20 TPS).
+  {#- Toujours rendue (masquée au besoin) : le défilement peut faire
+      apparaître la courbe joueurs sur une fenêtre qui en a alors que celle
+      d'origine n'en avait pas — la légende doit pouvoir suivre. #}
+  <div class="perf-axis perf-axis-joueurs" aria-hidden="true"
+       data-perf-legende-joueurs {% if not mspt_chart.joueurs %}hidden{% endif %}>
+    <span class="perf-legend-chip perf-players-chip">●</span>
+    <span>joueurs en ligne (échelle 0–<span data-perf-jmax>{{ mspt_chart.joueurs_max or 2 }}</span>)</span>
+  </div>
+  </div>
+  <p class="muted perf-legend">Pic : <span data-perf-pic>{{ mspt_chart.max }}</span> ms · chaque point est le
+    pire moment de sa fenêtre de <span data-perf-fenetre>{{ mspt_chart.window }}</span> — un à-coup ne peut pas se
+    cacher entre deux points · la ligne pointillée marque le seuil d'alerte ({{ mspt_chart.threshold_ms | int }} ms) —
+    le budget d'un tick est de 50 ms, au-delà le jeu ralentit (moins de 20 TPS).
+    <span data-perf-trous>{%- if mspt_chart.trous %} La courbe est interrompue à
+    {{ mspt_chart.trous }} endroit{{ "s" if mspt_chart.trous > 1 }} : aucune mesure
+    n'y a été enregistrée (serveur ou supervision à l'arrêt).{% endif %}</span>
     {%- if mspt_chart.markers %} Repères : <span class="perf-legend-chip perf-marker-backup">●</span> sauvegarde
     · <span class="perf-legend-chip perf-marker-restart">●</span> redémarrage
     · <span class="perf-legend-chip perf-marker-update">●</span> mise à jour.{% endif %}</p>
   {% else %}
   <p class="muted">Pas encore assez d'historique pour tracer la courbe sur cette plage.</p>
   {% endif %}
+  {% if ralentissements %}
+  <div class="perf-incidents">
+    <h3>Ralentissements détectés</h3>
+    <ul>
+      {% for r in ralentissements %}
+      <li>
+        <a href="/performance?start={{ r.debut }}&amp;end={{ r.fin }}"
+           title="Recadre la courbe sur cet épisode"
+           data-perf-ancre data-debut="{{ r.debut }}" data-fin="{{ r.fin }}"
+           {% if r.en_cours %}class="perf-incident-actif"{% endif %}>{{ r.quand }}</a>
+        <span class="muted">· {{ r.duree }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted rules-hint">Un clic recadre la courbe sur l'épisode — ce que
+      le serveur faisait à ce moment-là se lit alors directement.</p>
+  </div>
+  {% endif %}
 </section>
 
 {% if can_manage_alerts %}
 <section class="card">
-  <h2>Seuils d'alerte <span class="bc-sub">quand PerfWatcher prévient (Discord/Telegram)</span></h2>
+  <h2>Seuils d'alerte <span class="bc-sub">quand mc-admin envoie une alerte (Discord/Telegram)</span></h2>
   <form method="post" action="/actions/performance/thresholds" class="inline alert-thresholds-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>MSPT
@@ -203,6 +247,7 @@
 {% endblock %}
 
 {% block page_scripts %}
+<script src="/static/perf-chart.js?v=20260825-joueurs"></script>
 <script>
 (function () {
   var box = document.getElementById("sparkCountdown");

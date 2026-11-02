@@ -16,9 +16,10 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from adapters.maintenance_state import InMemoryPendingMaintenance
+from adapters.pending_restore import InMemoryPendingRestore
 from adapters.restart_schedule import InMemoryRestartSchedule
 from domain.errors import InvalidDuration, MaintenanceUnavailable, PermissionDenied
-from domain.model import Permission, Player, Role, ScheduledMaintenance, User
+from domain.model import Permission, PendingRestore, Player, Role, ScheduledMaintenance, User
 from domain.services import AdminService
 from domain.services.maintenance import (
     MAINTENANCE_STOP_TIMEOUT_SECONDS,
@@ -40,6 +41,7 @@ from tests.fakes import (
     FakeScheduledMaintenance,
     FakeTempBans,
     FakeUpdater,
+    FakeWorkerIntegrity,
     MutableClock,
     RecordingAudit,
 )
@@ -54,7 +56,8 @@ VIEWER = User(
 
 
 def _service(*, doorman=None, container=None, game=None, audit=None, clock=None,
-             pending=None, scheduled_maintenance=None, notifier=None):
+             pending=None, scheduled_maintenance=None, notifier=None,
+             worker_integrity=None, pending_restore=None):
     return AdminService(
         game=game or FakeGame(),
         container=container or FakeContainer(),
@@ -74,6 +77,8 @@ def _service(*, doorman=None, container=None, game=None, audit=None, clock=None,
         doorman=doorman if doorman is not None else FakeDoorman(),
         pending_maintenance=pending if pending is not None else InMemoryPendingMaintenance(),
         scheduled_maintenance=scheduled_maintenance,
+        worker_integrity=worker_integrity,
+        pending_restore=pending_restore,
     )
 
 
@@ -562,3 +567,177 @@ class TestMaintenanceGuardrailAndRecurring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPortierInapte(unittest.TestCase):
+    """Garde-fou n° 4 : on n'arrête pas le serveur pour un portier qu'on sait
+    inapte (image périmée, réseau disparu). Avant ce garde-fou, l'inaptitude
+    ne se découvrait qu'APRÈS l'arrêt de Minecraft : serveur fermé pour rien,
+    joueurs devant un « connexion refusée » brut (revue du 02/11/2026)."""
+
+    PERIME = "Portier de maintenance : périmé : il utilise une ancienne image de mc-admin"
+
+    def _integrity(self, issues=(), unknown=()):
+        return FakeWorkerIntegrity(issues_by_kind={"maintenance": list(issues)},
+                                   unknown_by_kind={"maintenance": list(unknown)})
+
+    def test_portier_perime_refuse_avant_tout_arret(self):
+        container, doorman, game = FakeContainer(), FakeDoorman(), FakeGame()
+        audit = RecordingAudit()
+        svc = _service(container=container, doorman=doorman, game=game, audit=audit,
+                       worker_integrity=self._integrity([self.PERIME]))
+
+        with self.assertRaises(MaintenanceUnavailable) as ctx:
+            svc.enter_maintenance(OWNER)
+
+        self.assertEqual(container.stops, 0)
+        self.assertFalse(doorman.running)
+        self.assertEqual(game.said, [])             # personne n'a été prévenu
+        self.assertIn("reste ouvert", str(ctx.exception))
+        self.assertIn("périmé", str(ctx.exception))
+        details = " ".join(e.detail for e in audit.entries)
+        self.assertIn("maintenance_blocked", details)
+
+    def test_portier_perime_refuse_aussi_une_fermeture_differee(self):
+        svc = _service(game=(game := FakeGame()),
+                       worker_integrity=self._integrity([self.PERIME]))
+        with self.assertRaises(MaintenanceUnavailable):
+            svc.enter_maintenance(OWNER, grace_minutes=10)
+        self.assertIsNone(svc._pending_maintenance.status())
+        self.assertEqual(game.said, [])             # aucune annonce de fermeture
+
+    def test_portier_perime_pendant_le_delai_annule_la_fermeture(self):
+        clock = MutableClock(T0)
+        container, doorman, game = FakeContainer(), FakeDoorman(), FakeGame()
+        notifier, integrity = FakeNotifier(), self._integrity()
+        svc = _service(container=container, doorman=doorman, game=game, clock=clock,
+                       notifier=notifier, worker_integrity=integrity)
+        svc.enter_maintenance(OWNER, grace_minutes=10)
+
+        integrity._issues["maintenance"] = [self.PERIME]   # MAJ ratée entre-temps
+        clock.moment = T0 + timedelta(minutes=10, seconds=1)
+        svc.tick_maintenance(MAINTENANCE_USER)
+
+        self.assertEqual(container.stops, 0)
+        self.assertFalse(doorman.running)
+        self.assertIsNone(svc._pending_maintenance.status())
+        self.assertIn("annulée", game.said[-1])     # les joueurs prévenus l'apprennent
+        self.assertTrue(any(n[2] == "error" for n in notifier.sent))
+
+    def test_maintenance_programmee_non_armee_et_signalee_une_seule_fois(self):
+        clock = MutableClock(T0)
+        hhmm = (clock.now().astimezone() + timedelta(minutes=3)).strftime("%H:%M")
+        wd = clock.now().astimezone().weekday()
+        store = FakeScheduledMaintenance(entries=[
+            ScheduledMaintenance(id="e1", kind="weekly", time_hhmm=hhmm,
+                                 weekdays=(wd,), lead_seconds=300),
+        ])
+        game, notifier = FakeGame(), FakeNotifier()
+        svc = _service(clock=clock, game=game, notifier=notifier,
+                       doorman=FakeDoorman(running=False), scheduled_maintenance=store,
+                       worker_integrity=self._integrity([self.PERIME]))
+
+        svc.tick_maintenance(MAINTENANCE_USER)
+        svc.tick_maintenance(MAINTENANCE_USER)
+
+        self.assertIsNone(svc._pending_maintenance.status())
+        self.assertEqual(game.said, [])             # fermeture jamais annoncée
+        self.assertEqual(len(notifier.sent), 1)     # un signalement, pas un par tick
+        self.assertEqual(store.last_fired("e1"), clock.now().astimezone().date().isoformat())
+
+    def test_portier_inverifiable_ne_bloque_pas(self):
+        # Proxy muet : l'arrêt échouerait de lui-même, sans rien casser.
+        container, doorman = FakeContainer(), FakeDoorman()
+        svc = _service(container=container, doorman=doorman,
+                       worker_integrity=self._integrity(unknown=["Portier : vérification impossible"]))
+        svc.enter_maintenance(OWNER)
+        self.assertEqual(container.stops, 1)
+        self.assertTrue(doorman.running)
+
+    def test_controle_qui_plante_ne_bloque_pas(self):
+        class _Plante:
+            def issues(self, kind, *, include_unknown=False):
+                raise RuntimeError("proxy muet")
+
+        container = FakeContainer()
+        _service(container=container, worker_integrity=_Plante()).enter_maintenance(OWNER)
+        self.assertEqual(container.stops, 1)
+
+
+class TestRestaurationExclusive(unittest.TestCase):
+    """Restauration et maintenance s'excluent (revue du 02/11/2026). Depuis la
+    V7b, c'est le portier de la RESTAURATION qui tient l'adresse pendant le
+    remplacement du monde : l'accueil affichait « Serveur en maintenance » et
+    proposait « Rouvrir », qui aurait démarré Minecraft sur un monde à moitié
+    remplacé."""
+
+    def _restoring(self):
+        store = InMemoryPendingRestore()
+        store.set(PendingRestore(filename="world.tar.gz", requested_by="jeremy",
+                                 deadline=T0 + timedelta(minutes=15)))
+        return store
+
+    def test_rouvrir_est_refuse_pendant_une_restauration(self):
+        container, doorman, audit = FakeContainer(), FakeDoorman(running=True), RecordingAudit()
+        svc = _service(container=container, doorman=doorman, audit=audit,
+                       pending_restore=self._restoring())
+        with self.assertRaises(MaintenanceUnavailable) as ctx:
+            svc.exit_maintenance(OWNER)
+        self.assertIn("rouvrira de lui-même", str(ctx.exception))
+        self.assertTrue(doorman.running)          # portier laissé en poste
+        self.assertEqual(container.starts, 0)     # Minecraft jamais démarré
+        self.assertIn("maintenance_release_blocked", audit.entries[-1].detail)
+
+    def test_l_accueil_distingue_la_restauration_de_la_maintenance(self):
+        svc = _service(doorman=FakeDoorman(running=True), pending_restore=self._restoring())
+        status = svc.maintenance_status(OWNER)
+        self.assertTrue(status.active)
+        self.assertTrue(status.restoring)
+        # Maintenance ordinaire : pas de confusion.
+        ordinaire = _service(doorman=FakeDoorman(running=True)).maintenance_status(OWNER)
+        self.assertFalse(ordinaire.restoring)
+
+    def test_fermer_pour_maintenance_est_refuse_pendant_une_restauration(self):
+        container = FakeContainer()
+        svc = _service(container=container, pending_restore=self._restoring())
+        with self.assertRaises(MaintenanceUnavailable) as ctx:
+            svc.enter_maintenance(OWNER)
+        self.assertIn("restauration", str(ctx.exception))
+        self.assertEqual(container.stops, 0)
+
+    def test_fermeture_annoncee_attend_la_fin_de_la_restauration(self):
+        clock, container, doorman = MutableClock(T0), FakeContainer(), FakeDoorman()
+        notifier, restore = FakeNotifier(), InMemoryPendingRestore()
+        svc = _service(clock=clock, container=container, doorman=doorman,
+                       notifier=notifier, pending_restore=restore)
+        svc.enter_maintenance(OWNER, grace_minutes=5)
+        restore.set(PendingRestore(filename="world.tar.gz", requested_by="jeremy",
+                                   deadline=T0 + timedelta(minutes=30)))
+
+        clock.moment = T0 + timedelta(minutes=5, seconds=1)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertEqual(container.stops, 0)                   # pas d'arrêt en pleine restauration
+        self.assertIsNotNone(svc._pending_maintenance.status())  # reportée, pas annulée
+        self.assertEqual(len(notifier.sent), 1)                # signalée une seule fois
+
+        restore.clear()                                        # restauration terminée
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertEqual(container.stops, 1)
+        self.assertTrue(doorman.running)
+
+    def test_maintenance_programmee_non_armee_pendant_une_restauration(self):
+        clock = MutableClock(T0)
+        hhmm = (clock.now().astimezone() + timedelta(minutes=3)).strftime("%H:%M")
+        wd = clock.now().astimezone().weekday()
+        store = FakeScheduledMaintenance(entries=[
+            ScheduledMaintenance(id="e1", kind="weekly", time_hhmm=hhmm,
+                                 weekdays=(wd,), lead_seconds=300),
+        ])
+        game = FakeGame()
+        svc = _service(clock=clock, game=game, doorman=FakeDoorman(running=False),
+                       scheduled_maintenance=store, pending_restore=self._restoring())
+        svc.tick_maintenance(MAINTENANCE_USER)
+        self.assertIsNone(svc._pending_maintenance.status())
+        self.assertEqual(game.said, [])
+        self.assertIsNone(store.last_fired("e1"))              # réessaiera après la restauration

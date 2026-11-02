@@ -819,6 +819,30 @@ class TestRestore(ServiceTestBase):
 
         self.assertTrue(any("archive modifiée" in issue for issue in issues))
 
+    def test_restore_refused_during_maintenance(self):
+        # Revue du 02/11/2026 : à la fin, le worker relève le portier et
+        # redémarre Minecraft — la maintenance manuelle serait levée en silence.
+        self.doorman.running = True
+        issues = self.service.restore_preflight(self.owner, self.ARCHIVE)
+        self.assertIn("le serveur est en maintenance : le rouvrir avant de restaurer", issues)
+        with self.assertRaises(RestoreUnavailable):
+            self.service.restore_backup(self.owner, self.ARCHIVE)
+        self.assertEqual(self.backup.triggers, 0)
+
+    def test_restore_refused_when_doorman_state_unreadable(self):
+        self.doorman.status_fail = True   # fail-closed, comme le reste du préflight
+        issues = self.service.restore_preflight(self.owner, self.ARCHIVE)
+        self.assertIn("état du mode maintenance illisible", issues)
+
+    def test_restore_refused_while_maintenance_is_announced(self):
+        from adapters.maintenance_state import InMemoryPendingMaintenance
+        pending = InMemoryPendingMaintenance()
+        pending.schedule(datetime(2026, 7, 1, 13, 0, tzinfo=timezone.utc), "jeremy",
+                         "motd", "kick", 600)
+        self.service._pending_maintenance = pending
+        issues = self.service.restore_preflight(self.owner, self.ARCHIVE)
+        self.assertTrue(any("fermeture pour maintenance est annoncée" in i for i in issues))
+
     def test_restore_rejected_when_backup_is_running(self):
         self.backup.running = True
         with self.assertRaises(RestoreUnavailable):

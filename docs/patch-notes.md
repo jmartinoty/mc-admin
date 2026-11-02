@@ -5,6 +5,88 @@ Liste courte, par ordre antéchronologique, de chaque correctif — distincte du
 date, une ligne de constat, une ligne de cause/fix. Mise à jour à chaque bug
 fix, même hors release.
 
+## 2026-11-02
+
+- **Changer un mot de passe ne déconnectait personne** — relevé par la
+  revue du 02/11. Ni la réinitialisation par l'owner ni le changement de
+  son propre mot de passe ne touchaient aux sessions ouvertes : un compte
+  dont le mot de passe avait fuité restait utilisable 14 jours par celui
+  qui l'avait. Fix : la réinitialisation par l'owner déconnecte tous les
+  appareils du compte (le nombre est journalisé) ; changer son propre mot
+  de passe déconnecte ses autres appareils, pas celui d'où l'on agit.
+- **Un compte supprimé puis recréé héritait de l'ancienne 2FA et des
+  anciennes sessions** — relevé par la revue du 02/11. La suppression
+  n'effaçait que le compte et son mot de passe : le secret de double
+  authentification (`totp.json`) et les sessions (`sessions.json`,
+  14 jours) restaient. Recréé sous le même identifiant, le compte exigeait
+  le code de l'ANCIEN téléphone et un ancien cookie redevenait valide — et
+  l'owner n'avait aucun moyen d'aider un ami ayant perdu son téléphone.
+  Fix : la suppression efface 2FA et sessions, la création purge les
+  restes éventuels, et la page Comptes propose « Réinitialiser la 2FA »
+  (owner, audité, jamais sur son propre compte).
+- **Pendant une restauration, « Rouvrir » aurait démarré Minecraft sur un
+  monde à moitié remplacé** — trouvé par la revue du 02/11, jamais
+  constaté (aucune restauration depuis la V7b). Depuis la V7b, c'est le
+  portier de la restauration qui tient l'adresse pendant le remplacement
+  du monde : l'accueil y voyait une maintenance et proposait « Rouvrir »
+  aux owners et admins. À l'inverse, une restauration lancée pendant une
+  maintenance la levait en silence à la fin, et une fermeture annoncée
+  pouvait arrêter le serveur en pleine restauration. Fix : les deux
+  s'excluent — restauration refusée pendant une maintenance active ou
+  annoncée ; « Fermer » et « Rouvrir » refusés pendant une restauration ;
+  une fermeture déjà annoncée attend la fin de la restauration ; l'accueil
+  affiche « Serveur fermé pendant une restauration », sans bouton.
+- **Une maintenance pouvait fermer le serveur pour rien** — relevé par la
+  revue du 02/11. Le contrôle d'alignement du portier (image, réseaux)
+  était déclaré pour la maintenance mais jamais appelé : un portier périmé
+  ne se découvrait qu'APRÈS l'arrêt de Minecraft, laissant les joueurs
+  devant un « connexion refusée ». Fix : contrôle avant tout arrêt — à la
+  demande, à l'armement d'une maintenance programmée et à l'échéance d'une
+  fermeture différée (annulée et annoncée en jeu si le portier s'est
+  périmé entre-temps). Un état invérifiable ne bloque pas.
+- **Chaque onglet Carte fermé pouvait bloquer l'application** — relevé
+  par la revue du 02/11, jamais constaté en usage. Le relais du flux des
+  joueurs de BlueMap lisait sans délai d'attente, dans un thread du pool
+  de l'application (40 en tout, partagés avec toutes les pages), et un
+  thread bloqué en lecture n'est pas libéré quand le navigateur se
+  déconnecte. BlueMap n'émettant rien tant que personne ne bouge (mesuré :
+  aucune ligne en 150 s, serveur vide), un onglet fermé gardait son thread
+  jusqu'au prochain mouvement de joueur ; 40 fermetures suffisaient à figer
+  l'interface. Fix : après 30 s de silence, le flux se termine proprement ;
+  BlueMap repasse brièvement en interrogation périodique puis se reconnecte
+  de lui-même.
+
+
+## 2026-08-24
+
+- **Les sparklines « Chunks chargés » s'affichaient en aplat noir** —
+  relevé par une revue de la page Performances, présent en prod depuis la
+  V6.7. Les règles CSS des sparklines étaient écrites pour les tuiles
+  (`.metric .spark`) ; dans le bloc par monde (`.perf-world`), AUCUNE ne
+  s'appliquait et la polyline prenait le rendu SVG par défaut : remplissage
+  noir, pas de trait. Fix : règles dédiées `.perf-world .spark`.
+
+
+## 2026-08-23
+
+- **Le graphe MSPT décalait sa courbe dès qu'une mesure manquait** —
+  trouvé en préparant le défilement dans le temps, jamais signalé par
+  Jeremy : le défaut est invisible tant que la série est complète. Les
+  points étaient placés à leur RANG (`span / (len - 1)`) alors que les
+  graduations horaires et les repères de sauvegarde étaient placés à leur
+  INSTANT. Prometheus n'émettant aucun point quand il n'a pas mesuré, un
+  trou se contractait à zéro pixel et tout son passé glissait vers la
+  droite. Mesuré sur les données réelles du NAS : un trou contigu de
+  12,0 h le 31/07 (710 points au lieu de 721 sur 30 jours) décalait la
+  courbe de près de 6 h sur une fenêtre de 24 h — les pics de MSPT
+  n'étaient plus en face des sauvegardes qui les causaient. Fix :
+  `mspt_history` porte des couples (instant, valeur) et la vue place les
+  points sur l'axe du temps ; un trou COUPE désormais la courbe au lieu
+  d'être enjambé par un trait droit qui ferait croire à des mesures
+  inexistantes, et la légende l'annonce. Les sparklines gardent des
+  valeurs nues : sans axe ni repère, un trou y est sans conséquence.
+
+
 ## 2026-07-31
 
 - **La version du jeu ne revenait qu'au rechargement manuel de la page** —

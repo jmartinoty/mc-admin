@@ -4,6 +4,70 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.22.0 — 2026-11-02
+
+Aucune modification du Compose : la mise à jour s'applique depuis le bouton
+habituel.
+
+### Performances
+
+- **Le graphe de lag se parcourt dans le temps.** Il se tire à la souris (ou
+  au doigt), se zoome à la molette et au clavier, et un bouton ramène à
+  l'instant présent. Les 30 jours d'historique conservés sont désormais
+  accessibles, et plus seulement les 7 derniers.
+- **La page répond au « pourquoi ».** La courbe des joueurs connectés se
+  superpose à celle du lag, sur le même axe de temps. Les ralentissements
+  enregistrés sont listés sous le graphe : un clic centre la courbe sur
+  l'épisode.
+- Les tuiles affichent la part du budget d'un tick consommée (par exemple
+  « 6 % »), les millisecondes restant visibles à côté.
+- Le verdict « sous le seuil / seuil dépassé » décrit la période affichée,
+  et non plus celle d'avant le déplacement.
+- **Les mesures sont placées à leur heure réelle.** Une mesure manquante
+  faisait glisser toute la courbe : un trou de 12 h décalait les pics de
+  près de 6 h par rapport aux sauvegardes qui les causaient. Un trou coupe
+  désormais la courbe au lieu d'être enjambé.
+- Les mini-courbes par monde s'affichaient en aplat noir.
+
+### Accueil et menu
+
+- Chaque tuile de mesure de l'accueil mène à sa page de détail.
+- Le menu est rangé en trois rubriques : **Jouer**, **Protéger** et
+  **Administrer**. Aucune rubrique ne s'affiche vide pour un compte aux
+  droits réduits.
+
+### Fiabilité et sécurité
+
+- **Pendant une restauration, l'accueil proposait « Rouvrir le serveur ».**
+  Le portier tient l'adresse du serveur pendant le remplacement du monde, et
+  l'accueil prenait cela pour une maintenance : un clic aurait démarré
+  Minecraft sur un monde à moitié remplacé. L'accueil affiche désormais
+  « Serveur fermé pendant une restauration », sans bouton. Plus largement,
+  restauration et maintenance ne peuvent plus se chevaucher : une
+  restauration est refusée pendant une maintenance active ou annoncée, et
+  une fermeture annoncée attend la fin d'une restauration en cours.
+- **Une maintenance ne ferme plus le serveur pour rien.** Le portier est
+  vérifié avant l'arrêt du serveur : s'il n'est pas à jour, la maintenance
+  est refusée et le serveur reste ouvert. Une fermeture programmée ou
+  différée est annulée, et annoncée en jeu, si le portier n'est plus apte au
+  moment de fermer.
+- **Changer un mot de passe déconnecte les autres appareils.** Une
+  réinitialisation par l'administrateur déconnecte le compte partout ; un
+  changement de son propre mot de passe déconnecte ses autres appareils.
+- **Supprimer un compte efface aussi sa double authentification et ses
+  sessions.** Un compte recréé sous le même nom en héritait. La page Comptes
+  propose aussi « Réinitialiser la 2FA », pour aider quelqu'un qui a perdu
+  son téléphone.
+- La carte pouvait, à la longue, bloquer l'application : chaque onglet Carte
+  fermé alors que personne ne jouait gardait une ressource réservée
+  jusqu'au prochain mouvement d'un joueur. Le flux des joueurs se termine
+  après 30 secondes de silence, et la carte se reconnecte d'elle-même.
+
+### Corrections
+
+- Trois formulations tutoyaient encore l'utilisateur. Les messages affichés
+  aux joueurs dans le jeu gardent, eux, le tutoiement d'usage.
+
 ## v0.21.0 — 2026-08-23
 
 ### Carte

@@ -25,6 +25,7 @@ from .model import (
     ContainerState,
     Incident,
     MetricReading,
+    MsptSeries,
     PerformanceSnapshot,
     ModInfo,
     ModUpdate,
@@ -381,6 +382,11 @@ class MetricsPort(Protocol):
     def snapshot(self) -> list[MetricReading]: ...
 
     def performance(self, history_hours: int = 24) -> PerformanceSnapshot: ...
+
+    # Navigation dans le temps du graphe MSPT : l'appelant fournit des BORNES,
+    # jamais une requête ni un pas d'échantillonnage — l'adapter garde la main
+    # sur le PromQL et sur la résolution (même principe que `performance()`).
+    def mspt_range(self, start: float, end: float) -> MsptSeries: ...
 
 
 class OpsPort(Protocol):

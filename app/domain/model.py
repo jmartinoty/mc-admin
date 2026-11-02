@@ -281,11 +281,15 @@ class PendingMaintenance:
 class MaintenanceStatus:
     """Vue du mode maintenance : portier en place et/ou fermeture annoncée.
     `motd` n'est connu que du vivant du process qui a engagé la maintenance
-    (contexte d'affichage, jamais une source de décision)."""
+    (contexte d'affichage, jamais une source de décision).
+    `restoring` : le portier tient l'adresse pour une RESTAURATION en cours
+    (V7b), pas pour une maintenance — le serveur rouvrira de lui-même et
+    « Rouvrir » ne doit pas être proposé."""
 
     active: bool
     pending: PendingMaintenance | None = None
     motd: str = ""
+    restoring: bool = False
 
 
 @dataclass(frozen=True)
@@ -597,10 +601,36 @@ class PerformanceSnapshot:
     tps: float | None = None
     mspt_mean: float | None = None
     mspt_max: float | None = None
-    mspt_history: tuple[float, ...] | None = None
     entities_total: int | None = None
     entity_top: tuple[EntityTop, ...] = ()
     chunks: tuple[WorldChunks, ...] = ()
+
+
+# Budget d'un tick : 1000 ms / 20 ticks. CONSTANTE DU JEU, pas un réglage —
+# le seuil d'alerte (AlertThresholds.mspt_threshold_ms) reste configurable,
+# mais « 100 % » veut toujours dire « le jeu ralentit ».
+TICK_BUDGET_MS = 50.0
+
+
+@dataclass(frozen=True)
+class MsptSeries:
+    """Série MSPT sur une fenêtre ARBITRAIRE — c'est ce qui permet de
+    remonter dans le temps au lieu de rester collé au présent.
+
+    `start`/`end` sont la fenêtre RÉELLEMENT servie, pas celle demandée :
+    le service borne (pas de futur, pas au-delà de la rétention), et la vue
+    doit savoir ce qu'elle affiche vraiment. `step` est choisi par l'adapter
+    à partir de la largeur — l'UI ne dicte jamais l'échantillonnage, comme
+    elle ne dicte jamais le PromQL."""
+
+    start: float
+    end: float
+    step: int
+    points: tuple[tuple[float, float], ...] = ()
+    # Joueurs en ligne sur la MÊME fenêtre, même pas : la variable explicative
+    # n° 1 d'un serveur familial. Un pic MSPT sans la courbe joueurs à côté ne
+    # répond à aucun « pourquoi » (review du 24/08/2026).
+    players: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass(frozen=True)

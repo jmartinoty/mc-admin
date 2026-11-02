@@ -192,3 +192,8 @@ class SessionRegistry:
             if targets:
                 self._persist()
         return len(targets)
+
+    def revoke_all(self, username: str) -> int:
+        """Révoque TOUTES les sessions de `username` (mot de passe réinitialisé
+        par un tiers, compte supprimé). Renvoie le nombre révoqué."""
+        return self.revoke_others("", username)

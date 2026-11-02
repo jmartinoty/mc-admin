@@ -47,6 +47,9 @@ def _restore_doorman_consigne() -> tuple[str, str]:
     `build_maintenance_messages` — le portier n'a aucune logique de
     présentation, il sert la consigne telle quelle."""
     motd = "§e⚙ Restauration en cours\n§fLe serveur revient dans quelques minutes."
+    # tutoiement-joueur : ce texte s'affiche AU JOUEUR dans Minecraft, où le
+    # tutoiement est l'usage — la 3e personne ne vaut que pour l'interface
+    # d'administration.
     kick = "Une sauvegarde est en cours de restauration. Reviens dans quelques minutes."
     return motd, kick
 
@@ -477,6 +480,21 @@ class BackupsMixin:
             issues.append("le conteneur de restauration est déjà en cours")
         if self._archive_validator is None:
             issues.append("validation immédiate des archives non configurée")
+        # Restauration et maintenance s'excluent (revue du 02/11/2026) : à la
+        # fin de la transaction, le worker relève le portier et redémarre
+        # Minecraft — une maintenance manuelle serait levée en silence, et une
+        # fermeture annoncée arrêterait le serveur en pleine restauration.
+        # Fail-closed comme le reste du préflight : état illisible = refus.
+        doorman = getattr(self, "_doorman", None)
+        if doorman is not None:
+            try:
+                if doorman.is_running():
+                    issues.append("le serveur est en maintenance : le rouvrir avant de restaurer")
+            except Exception:  # noqa: BLE001
+                issues.append("état du mode maintenance illisible")
+        pending_maintenance = getattr(self, "_pending_maintenance", None)
+        if pending_maintenance is not None and pending_maintenance.status() is not None:
+            issues.append("une fermeture pour maintenance est annoncée : l'annuler ou attendre qu'elle soit terminée")
         if check_archive:
             issues.extend(self._restore_archive_issues(filename))
 

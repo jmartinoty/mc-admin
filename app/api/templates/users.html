@@ -28,6 +28,14 @@
           </td>
           <td class="backup-acts">
             <button type="button" class="txtbtn js-reset-open" data-username="{{ a.username }}">Réinitialiser le mot de passe</button>
+            {% if a.twofa and not a.is_me %}
+            <form method="post" action="/actions/users/reset-2fa" class="js-confirm-form"
+                  data-confirm="Désactiver la double authentification de « {{ a.username }} » ? Le compte se connectera avec son seul mot de passe, et pourra la réactiver depuis sa page Compte.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="username" value="{{ a.username }}">
+              <button type="button" class="txtbtn js-confirm-open">Réinitialiser la 2FA</button>
+            </form>
+            {% endif %}
             {% if not a.is_me %}
             <form method="post" action="/actions/users/delete" class="js-confirm-form"
                   data-confirm="Supprimer le compte « {{ a.username }} » ? Il ne pourra plus se connecter.">

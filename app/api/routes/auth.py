@@ -54,6 +54,34 @@ def _log_persistence_error(action: str, exc: Exception) -> None:
     logger.error("%s : stockage local indisponible : %s", action, exc, exc_info=True)
 
 
+def _revoke_all_sessions(request: Request, username: str) -> int:
+    """Déconnecte tous les appareils de `username`. 0 sans registre."""
+    registry = getattr(request.app.state, "sessions", None)
+    return registry.revoke_all(username) if registry is not None else 0
+
+
+def _revoke_other_sessions(request: Request, username: str) -> int:
+    """Déconnecte les appareils de `username` SAUF la session en cours."""
+    registry = getattr(request.app.state, "sessions", None)
+    if registry is None:
+        return 0
+    return registry.revoke_others(request.session.get("sid") or "", username)
+
+
+def _forget_account_traces(request: Request, username: str) -> None:
+    """Efface ce qu'un compte laisse hors de users.json et passwords.json :
+    son secret de double authentification et ses sessions.
+
+    Sans ça, un compte supprimé puis RECRÉÉ sous le même identifiant héritait
+    des deux (revue du 02/11/2026) : la 2FA restait exigée avec l'ancien
+    secret — le nouveau titulaire ne pouvait pas se connecter, l'ancien
+    téléphone passait — et un ancien cookie redevenait valide (le registre
+    ne vérifie que l'identifiant et l'âge de la session). Lève en cas
+    d'échec de stockage : l'appelant décide."""
+    request.app.state.totp.remove(username)
+    _revoke_all_sessions(request, username)
+
+
 # --- premier lancement (V6.2) : créer le compte administrateur dans l'UI ---
 
 def _setup_needed(request: Request) -> bool:
@@ -136,12 +164,14 @@ def users_page(request: Request):
     from api.routes.common import _nav_context
     ctx = _nav_context(request, user, "users")
     dn = request.app.state.display_names
+    totp_store = request.app.state.totp
     ctx["accounts"] = sorted(
         ({
             "username": u.username,
             "display_name": dn.get(u.username) or u.username,
             "role": u.role.name,
             "is_me": u.username == user.username,
+            "twofa": totp_store.is_enabled(u.username),
         } for u in request.app.state.users.values()),
         key=lambda a: a["username"].lower(),
     )
@@ -177,6 +207,9 @@ def action_user_add(
         request.session["flash"] = "Échec : mot de passe trop court (8 caractères minimum)."
     else:
         try:
+            # Restes éventuels d'un ancien compte du même nom (supprimé avant
+            # que la suppression ne nettoie tout) : effacés AVANT la création.
+            _forget_account_traces(request, username)
             _persist_new_account(request, username, role, password)
         except _PERSISTENCE_ERRORS as exc:
             _log_persistence_error(f"création du compte {username}", exc)
@@ -220,9 +253,20 @@ def action_user_reset_password(
             _log_persistence_error(f"réinitialisation du mot de passe de {username}", exc)
             request.session["flash"] = "Échec : le mot de passe n'a pas été modifié."
         else:
+            # Un mot de passe réinitialisé par un tiers l'est souvent parce
+            # qu'il a fuité : les appareils déjà connectés ne doivent pas
+            # survivre au changement (revue du 02/11/2026). Sur son propre
+            # compte, on garde la session en cours.
+            if username == user.username:
+                revoked = _revoke_other_sessions(request, username)
+            else:
+                revoked = _revoke_all_sessions(request, username)
             request.app.state.service.record_account_change(
-                user, f"phase=password_reset account={username}")
-            request.session["flash"] = f"Mot de passe de « {username} » réinitialisé."
+                user, f"phase=password_reset account={username} sessions_revoked={revoked}")
+            request.session["flash"] = (
+                f"Mot de passe de « {username} » réinitialisé."
+                + (f" {revoked} appareil(s) déconnecté(s)." if revoked else "")
+            )
     return RedirectResponse("/users", status_code=303)
 
 
@@ -296,12 +340,22 @@ def action_user_delete(
                 return RedirectResponse("/users", status_code=303)
             request.app.state.users.pop(username, None)
             credentials_removed = True
+            # Deux nettoyages indépendants : l'échec de l'un n'empêche pas
+            # l'autre (et la recréation du compte refait le second).
             try:
                 request.app.state.password_overrides.remove(username)
             except _PERSISTENCE_ERRORS as exc:
                 credentials_removed = False
                 _log_persistence_error(
                     f"nettoyage du mot de passe du compte supprimé {username}",
+                    exc,
+                )
+            try:
+                _forget_account_traces(request, username)
+            except _PERSISTENCE_ERRORS as exc:
+                credentials_removed = False
+                _log_persistence_error(
+                    f"nettoyage de la 2FA et des sessions du compte supprimé {username}",
                     exc,
                 )
             request.app.state.service.record_account_change(
@@ -315,8 +369,53 @@ def action_user_delete(
                 request.session["flash"] = f"Compte « {username} » supprimé."
             else:
                 request.session["flash"] = (
-                    f"Compte « {username} » supprimé, mais le nettoyage de son "
-                    "ancien mot de passe doit être vérifié."
+                    f"Compte « {username} » supprimé, mais le nettoyage de ses "
+                    "anciens identifiants doit être vérifié."
+                )
+    return RedirectResponse("/users", status_code=303)
+
+
+@router.post("/actions/users/reset-2fa")
+def action_user_reset_twofa(
+    request: Request,
+    username: str = Form(...),
+    csrf_token: str = Form(...),
+):
+    """Désactive la double authentification d'un AUTRE compte (téléphone
+    perdu) : l'utilisateur se reconnecte avec son seul mot de passe, puis
+    peut la réactiver depuis sa page Compte. Sans ce geste, l'owner n'avait
+    aucun recours (la suppression-recréation ne l'effaçait même pas)."""
+    user = _current(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _require_csrf(request, csrf_token)
+    try:
+        request.app.state.service.authorize_user_management(user)
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if username == user.username:
+        # Sa propre 2FA se désactive depuis la page Compte, mot de passe
+        # actuel à l'appui : ce raccourci ne doit pas la contourner.
+        request.session["flash"] = "Échec : la double authentification se gère depuis la page Compte."
+    elif username not in request.app.state.users:
+        request.session["flash"] = f"Échec : compte inconnu « {username} »."
+    else:
+        try:
+            removed = request.app.state.totp.remove(username)
+        except _PERSISTENCE_ERRORS as exc:
+            _log_persistence_error(f"réinitialisation de la 2FA de {username}", exc)
+            request.session["flash"] = "Échec : la double authentification n'a pas été modifiée."
+        else:
+            if removed:
+                request.app.state.service.record_account_change(
+                    user, f"phase=twofa_reset account={username}")
+                request.session["flash"] = (
+                    f"Double authentification de « {username} » désactivée : "
+                    "le compte se connecte avec son seul mot de passe."
+                )
+            else:
+                request.session["flash"] = (
+                    f"« {username} » n'avait pas de double authentification."
                 )
     return RedirectResponse("/users", status_code=303)
 
@@ -505,7 +604,14 @@ def action_password(
             )
             request.session["flash"] = "Échec : le mot de passe n'a pas été modifié."
         else:
-            request.session["flash"] = "Mot de passe mis à jour."
+            # Changer son mot de passe déconnecte ses AUTRES appareils (celui
+            # d'où l'on agit reste connecté) : c'est le geste attendu quand
+            # on soupçonne une fuite.
+            revoked = _revoke_other_sessions(request, user.username)
+            request.session["flash"] = "Mot de passe mis à jour." + (
+                f" Les autres appareils connectés ({revoked}) ont été déconnectés."
+                if revoked else ""
+            )
     return RedirectResponse(_redirect_target(redirect_to, "/"), status_code=303)
 
 

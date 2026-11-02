@@ -154,7 +154,7 @@ class UpdateMixin:
             self._notify.notify(
                 "Mise à jour du serveur échouée",
                 f"Le conteneur de mise à jour s'est arrêté en erreur (code {code}). "
-                "Le serveur n'a peut-être pas redémarré — vérifie son état.",
+                "Le serveur n'a peut-être pas redémarré — vérifier son état.",
                 "error", event="update",
             )
             return

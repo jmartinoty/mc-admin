@@ -525,7 +525,6 @@ class FakeMetrics:
         from domain.model import EntityTop, PerformanceSnapshot, WorldChunks
         self.perf = perf if perf is not None else PerformanceSnapshot(
             tps=20.0, mspt_mean=3.2, mspt_max=41.0,
-            mspt_history=(2.0, 3.5, 60.0, 4.0),
             entities_total=245,
             entity_top=(EntityTop(world="overworld", type="zombie", count=120),
                         EntityTop(world="the_nether", type="ghast", count=14)),
@@ -540,6 +539,39 @@ class FakeMetrics:
             raise ServerUnavailable("prometheus down (fake)")
         self.last_history_hours = history_hours
         return self.perf
+
+    # Miroir de l'échelle de pas de PrometheusMetrics._PAS_ECHELLE : la
+    # légende affiche la fenêtre déduite du pas RÉEL, les tests de page ne
+    # peuvent la vérifier que si le fake échantillonne comme l'adapter.
+    _PAS_ECHELLE = (60, 120, 300, 600, 900, 1800, 3600, 7200, 21600, 43200, 86400)
+
+    def mspt_range(self, start, end):
+        """Fenêtre arbitraire — le fake sert des séries RÉGULIÈRES couvrant
+        exactement la fenêtre demandée, pour que les tests de navigation
+        vérifient les BORNES (le service les corrige) et pas le contenu.
+        `joueurs_fake` (défaut : une constante à 2) permet aux tests de la
+        courbe joueurs d'injecter leur propre motif."""
+        from domain.model import MsptSeries
+        if not self._available:
+            from domain.errors import ServerUnavailable
+            raise ServerUnavailable("prometheus down (fake)")
+        self.last_range = (start, end)
+        if getattr(self, "serie_vide", False):
+            # Simule un Prometheus qui n'a rien sur la fenêtre (install neuve,
+            # trou total) : la page doit le dire, pas tracer du vide.
+            return MsptSeries(start=start, end=end, step=60)
+        largeur = max(end - start, 1.0)
+        pas = next((p for p in self._PAS_ECHELLE if largeur / p <= 150),
+                   self._PAS_ECHELLE[-1])
+        n = int(largeur // pas) + 1
+        # `mspt_valeur` pilotable : un test du badge pose 60.0 pour franchir
+        # le seuil, la valeur par défaut reste calme.
+        valeur = getattr(self, "mspt_valeur", 5.0)
+        points = tuple((start + i * pas, valeur) for i in range(n))
+        joueurs = getattr(self, "joueurs_fake", None)
+        players = (tuple(joueurs) if joueurs is not None
+                   else tuple((start + i * pas, 2.0) for i in range(n)))
+        return MsptSeries(start=start, end=end, step=pas, points=points, players=players)
 
     def _init_readings(self, readings=None, available=True):
         self.readings = list(readings) if readings is not None else [

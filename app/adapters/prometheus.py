@@ -19,7 +19,13 @@ import urllib.parse
 import urllib.request
 
 from domain.errors import ServerUnavailable
-from domain.model import EntityTop, MetricReading, PerformanceSnapshot, WorldChunks
+from domain.model import (
+    EntityTop,
+    MetricReading,
+    MsptSeries,
+    PerformanceSnapshot,
+    WorldChunks,
+)
 
 # Fenêtre des sparklines : 24 h par pas de 30 min (48 points).
 _SPARK_RANGE_SECONDS = 24 * 3600
@@ -70,16 +76,27 @@ class PrometheusMetrics:
         except (KeyError, IndexError, TypeError, ValueError):
             return None
 
-    def _query_history(self, promql: str, range_seconds: int = _SPARK_RANGE_SECONDS,
-                       step_seconds: int = _SPARK_STEP_SECONDS) -> tuple[float, ...] | None:
-        """Série sur `range_seconds` (défaut 24 h — sparklines). Best-effort :
-        TOUTE erreur -> None, la valeur instantanée reste affichée (si
-        Prometheus est vraiment down, _query_value lève déjà pour le panneau
-        entier — inutile de lever une seconde fois ici)."""
-        end = time.time()
+    def _query_series(self, promql: str, range_seconds: int = _SPARK_RANGE_SECONDS,
+                      step_seconds: int = _SPARK_STEP_SECONDS,
+                      ) -> tuple[tuple[float, float], ...] | None:
+        """Série HORODATÉE sur `range_seconds` : couples (instant, valeur).
+        Best-effort : TOUTE erreur -> None, la valeur instantanée reste
+        affichée (si Prometheus est vraiment down, _query_value lève déjà
+        pour le panneau entier — inutile de lever une seconde fois ici).
+
+        Prometheus n'émet PAS de point là où il n'a pas de mesure : la série
+        se contente d'être plus courte. Sans les instants, impossible de
+        savoir OÙ manquent les points — d'où les couples."""
+        fin = time.time()
+        return self._fetch_series(promql, fin - range_seconds, fin, step_seconds)
+
+    def _fetch_series(self, promql: str, start: float, end: float, step_seconds: int,
+                      ) -> tuple[tuple[float, float], ...] | None:
+        """Une fenêtre EXPLICITE [start, end]. C'est ce qui permet de remonter
+        dans le temps : `_query_series` s'ancre sur maintenant, celle-ci non."""
         params = urllib.parse.urlencode({
             "query": promql,
-            "start": f"{end - range_seconds:.0f}",
+            "start": f"{start:.0f}",
             "end": f"{end:.0f}",
             "step": str(step_seconds),
         })
@@ -88,10 +105,18 @@ class PrometheusMetrics:
             result = (data.get("data") or {}).get("result") or []
             if data.get("status") != "success" or not result:
                 return None
-            values = tuple(float(v) for _, v in result[0]["values"])
+            points = tuple((float(at), float(v)) for at, v in result[0]["values"])
         except Exception:  # noqa: BLE001
             return None
-        return values if len(values) >= 2 else None
+        return points if len(points) >= 2 else None
+
+    def _query_history(self, promql: str, range_seconds: int = _SPARK_RANGE_SECONDS,
+                       step_seconds: int = _SPARK_STEP_SECONDS) -> tuple[float, ...] | None:
+        """Valeurs nues, sans les instants — pour les SPARKLINES, qui n'ont
+        ni axe ni repères : un trou y est invisible et sans conséquence. Le
+        graphe MSPT, lui, passe par `_query_series`."""
+        points = self._query_series(promql, range_seconds, step_seconds)
+        return tuple(v for _, v in points) if points else None
 
     def _query_vector(self, promql: str) -> list[tuple[dict, float]]:
         """Résultat instantané AVEC labels (topk, groupements par monde).
@@ -147,19 +172,53 @@ class PrometheusMetrics:
     _PERF_ENTITIES_TOTAL = "sum(minecraft_entities)"
     _PERF_CHUNKS = "sum by (world) (minecraft_loaded_chunks)"
 
-    # Pas d'échantillonnage du graphe MSPT par plage demandée : la fenêtre du
-    # max_over_time ÉGALE le pas — chaque point est le PIRE de sa fenêtre, un
-    # pic ne peut plus passer entre deux échantillons (demande Jeremy 19/07).
-    _MSPT_WINDOWS = {24: (900, "15m"), 72: (1800, "30m"), 168: (3600, "1h")}
+
+    # Navigation libre : le pas suit la largeur de fenêtre. On prend le plus
+    # petit pas donnant au plus _CIBLE_POINTS points. Le plancher à 60 s reste
+    # au-dessus de l'intervalle de collecte (15 s) — descendre en dessous
+    # ferait répéter des points sans rien apprendre.
+    _PAS_ECHELLE = ((60, "1m"), (120, "2m"), (300, "5m"), (600, "10m"), (900, "15m"),
+                    (1800, "30m"), (3600, "1h"), (7200, "2h"), (21600, "6h"),
+                    (43200, "12h"), (86400, "1d"))
+    _CIBLE_POINTS = 150
+
+    @classmethod
+    def _pas_pour(cls, largeur_s: float) -> tuple[int, str]:
+        for pas, libelle in cls._PAS_ECHELLE:
+            if largeur_s / pas <= cls._CIBLE_POINTS:
+                return pas, libelle
+        return cls._PAS_ECHELLE[-1]
+
+    # Joueurs en ligne (mc-monitor). max_over_time : un passage éclair entre
+    # deux points ne disparaît pas — même garantie que pour le MSPT.
+    _PLAYERS_QUERY = "minecraft_status_players_online_count"
+
+    def mspt_range(self, start: float, end: float) -> MsptSeries:
+        """Séries MSPT + joueurs sur une fenêtre arbitraire — le cœur du
+        défilement.
+
+        La fenêtre du `max_over_time` ÉGALE le pas à TOUS les niveaux de
+        zoom : la garantie « chaque point est le pire de sa fenêtre, un
+        à-coup ne peut pas se cacher entre deux points » (demande Jeremy
+        19/07) ne se dégrade donc pas quand on dézoome — elle s'exprime
+        seulement sur une fenêtre plus large.
+
+        Les joueurs voyagent AVEC le MSPT (même fenêtre, même pas) : la
+        question réelle n'est jamais « quel était le MSPT ? » mais « qui
+        était là quand ça a ramé ? » — les deux courbes doivent partager
+        leur axe pour y répondre (review du 24/08/2026)."""
+        pas, fenetre = self._pas_pour(max(end - start, 1.0))
+        points = self._fetch_series(
+            f'max_over_time(minecraft_mspt{{type="mean"}}[{fenetre}])', start, end, pas)
+        players = self._fetch_series(
+            f"max_over_time({self._PLAYERS_QUERY}[{fenetre}])", start, end, pas)
+        return MsptSeries(start=start, end=end, step=pas,
+                          points=points or (), players=players or ())
 
     def performance(self, history_hours: int = 24) -> PerformanceSnapshot:
         tps = self._query_value("minecraft_tps")
         mspt_mean = self._query_value('minecraft_mspt{type="mean"}')
         mspt_max = self._query_value('minecraft_mspt{type="max"}')
-        step, window = self._MSPT_WINDOWS.get(history_hours, self._MSPT_WINDOWS[24])
-        mspt_history = self._query_history(
-            f'max_over_time(minecraft_mspt{{type="mean"}}[{window}])',
-            range_seconds=history_hours * 3600, step_seconds=step)
         total = self._query_value(self._PERF_ENTITIES_TOTAL)
         top = tuple(
             EntityTop(world=str(labels.get("world", "?")), type=str(labels.get("type", "?")),
@@ -174,7 +233,7 @@ class PrometheusMetrics:
             for world in sorted(set(chunks_now) | set(chunks_hist))
         )
         return PerformanceSnapshot(
-            tps=tps, mspt_mean=mspt_mean, mspt_max=mspt_max, mspt_history=mspt_history,
+            tps=tps, mspt_mean=mspt_mean, mspt_max=mspt_max,
             entities_total=int(total) if total is not None else None,
             entity_top=top, chunks=chunks,
         )

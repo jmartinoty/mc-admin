@@ -41,6 +41,8 @@ _MAX_STRING_BYTES = 1024
 _CLIENT_TIMEOUT_SECONDS = 10.0
 
 _DEFAULT_MOTD = "Serveur en maintenance"
+# tutoiement-joueur : message affiché AU JOUEUR quand il tente de se
+# connecter pendant une maintenance. Le tutoiement est l'usage dans un jeu.
 _DEFAULT_KICK = "Le serveur est en maintenance. Reviens un peu plus tard !"
 
 

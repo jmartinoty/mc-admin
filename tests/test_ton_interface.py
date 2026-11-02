@@ -39,6 +39,7 @@ _VERBES_DEBUT = (
     "réessaie", "choisis", "saisis", "scanne", "installe", "récupère",
     "recharge", "renseigne", "glisse", "colle", "télécharge", "clique",
     "coche", "remplis", "confirme", "sélectionne", "vérifie", "crée", "ouvre",
+    "reviens", "patiente", "attends",
 )
 _PRONOMS_ENCLITIQUES = ("le", "la", "les", "moi", "toi", "y", "en", "lui")
 
@@ -57,9 +58,19 @@ TUTOIEMENT = re.compile(
     r"|\b\w{3,}[éez]-(?:" + "|".join(_PRONOMS_ENCLITIQUES) + r")\b(?!-)"
     # 3. Verbe d'action en début de phrase (après un début de ligne, une
     #    ponctuation forte, une balise fermante ou un numéro de liste).
-    r"|(?:^|[.!?:]\s+|>\s*|\d\.\s+)(?:" + "|".join(_VERBES_DEBUT) + r")\b",
+    # Après un début de ligne, une ponctuation forte, un tiret d'incise, une
+    # balise fermante ou un numéro de liste. Le tiret comptait : « le serveur
+    # n'a pas redémarré — vérifie son état » échappait au premier jet.
+    r"|(?:^|[.!?:,]\s+|[—–-]\s+|>\s*|\d\.\s+)(?:" + "|".join(_VERBES_DEBUT) + r")\b",
     re.IGNORECASE | re.MULTILINE,
 )
+
+# Les messages affichés AUX JOUEURS dans Minecraft gardent le tutoiement :
+# c'est l'usage dans un jeu, et la 3e personne ne vaut que pour l'interface
+# d'administration. L'exemption est portée par un commentaire sur la ligne
+# précédente ou la ligne elle-même — locale et visible, jamais une liste de
+# fichiers entiers qui dispenserait tout un module.
+MARQUEUR_JOUEUR = "tutoiement-joueur"
 
 # Faux positifs connus : du vocabulaire du jeu ou du code, pas une adresse au
 # lecteur.
@@ -71,8 +82,17 @@ TOLERE = re.compile(
 
 def textes(chemin: Path) -> list[tuple[int, str]]:
     lignes = chemin.read_text(encoding="utf-8").splitlines()
-    return [(n, ligne) for n, ligne in enumerate(lignes, 1)
-            if TUTOIEMENT.search(ligne) and not TOLERE.search(ligne)]
+    fautives = []
+    for n, ligne in enumerate(lignes, 1):
+        if not TUTOIEMENT.search(ligne) or TOLERE.search(ligne):
+            continue
+        # Exemption : marqueur sur la ligne, ou dans les trois lignes qui la
+        # précèdent (un commentaire explicatif y tient rarement en une seule).
+        contexte = lignes[max(0, n - 4):n]
+        if any(MARQUEUR_JOUEUR in c for c in contexte):
+            continue
+        fautives.append((n, ligne))
+    return fautives
 
 
 class TonTests(unittest.TestCase):

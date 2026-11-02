@@ -199,11 +199,81 @@ class TestFluxEvenements(unittest.TestCase):
             accept_encoding=accept_encoding)
         return vu, status, headers, list(chunks)
 
-    def test_un_flux_n_a_pas_de_delai_d_attente(self):
-        """Le silence est NORMAL sur un flux : il ne signifie pas que la carte
-        est injoignable."""
+    def test_un_flux_a_un_delai_de_silence_long_mais_fini(self):
+        """Le silence est NORMAL sur un flux (il ne coupe pas au premier
+        silence comme un fichier) — mais un délai infini bloquait un thread
+        du pool par onglet fermé (constaté le 02/11/2026)."""
         vu, _s, _h, _c = self._capture(self.CHEMIN, self.EVENEMENTS, "text/event-stream")
-        self.assertIsNone(vu["timeout"])
+        vu_fichier, _s, _h, _c = self._capture("assets/app.js")
+        self.assertIsNotNone(vu["timeout"])
+        self.assertGreater(vu["timeout"], vu_fichier["timeout"])
+
+    def test_un_flux_silencieux_se_termine_proprement(self):
+        """Le silence prolongé met fin au flux SANS erreur : l'EventSource de
+        BlueMap se reconnecte seul."""
+        class _Muet(_FakeResponse):
+            def readline(self):
+                line = self._buf.readline()
+                if not line:
+                    raise TimeoutError("timed out")
+                return line
+
+        reponse = _Muet(body=b"event: marker\ndata: {}\n\n", content_type="text/event-stream")
+        _s, _h, chunks = open_map_path("http://minecraft:8100", self.CHEMIN,
+                                       opener=lambda request, timeout: reponse)
+        self.assertEqual(b"".join(chunks), b"event: marker\ndata: {}\n\n")
+        self.assertTrue(reponse.closed)
+
+    def test_un_fichier_trop_lent_reste_une_erreur(self):
+        """Pour un fichier, un délai dépassé n'est PAS une fin normale : il
+        ne doit pas passer pour un fichier complet (tronqué en silence)."""
+        class _Lent(_FakeResponse):
+            def read(self, n=-1):
+                raise TimeoutError("timed out")
+
+        _s, _h, chunks = open_map_path("http://minecraft:8100", "assets/app.js",
+                                       opener=lambda request, timeout: _Lent())
+        with self.assertRaises(TimeoutError):
+            list(chunks)
+
+    def test_vrai_serveur_muet_libere_le_relais(self):
+        """Bout en bout avec de vraies sockets : un serveur SSE qui envoie un
+        premier événement puis se tait (comme BlueMap serveur vide) — le
+        relais rend la main après le délai de silence au lieu de bloquer."""
+        import http.server
+        import threading
+        import time
+
+        liberer = threading.Event()
+
+        class _Muet(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(b"event: marker\ndata: {}\n\n")
+                self.wfile.flush()
+                liberer.wait(10)  # se tait, sans fermer la connexion
+
+            def log_message(self, *args):
+                pass
+
+        serveur = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Muet)
+        serveur.daemon_threads = True
+        threading.Thread(target=serveur.serve_forever, daemon=True).start()
+        try:
+            base = f"http://127.0.0.1:{serveur.server_address[1]}"
+            debut = time.monotonic()
+            _s, headers, chunks = open_map_path(base, self.CHEMIN, silence_flux=0.5)
+            corps = b"".join(chunks)
+            duree = time.monotonic() - debut
+        finally:
+            liberer.set()
+            serveur.shutdown()
+            serveur.server_close()
+        self.assertEqual(headers.get("Content-Type"), "text/event-stream")
+        self.assertEqual(corps, b"event: marker\ndata: {}\n\n")
+        self.assertLess(duree, 5, "le relais doit rendre la main après le silence")
 
     def test_un_fichier_garde_son_delai_d_attente(self):
         vu, _s, _h, _c = self._capture("assets/app.js")

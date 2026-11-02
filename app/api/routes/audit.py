@@ -270,6 +270,7 @@ _PHASE_LABELS = {
     "password_reset": "Mot de passe réinitialisé",
     "role_changed": "Rôle modifié",
     "account_deleted": "Compte supprimé",
+    "twofa_reset": "Double authentification réinitialisée",
 }
 
 _DETAIL_LABELS = {
@@ -283,7 +284,8 @@ _DETAIL_LABELS = {
     "account": "Compte",
     "username": "Compte",
     "role": "Rôle",
-    "credentials_removed": "Ancien mot de passe supprimé",
+    "credentials_removed": "Anciens identifiants supprimés",
+    "sessions_revoked": "Appareils déconnectés",
     "count": "Niveaux à appliquer",
     "exit_code": "Code de retour",
 }

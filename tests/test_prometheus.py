@@ -157,7 +157,9 @@ class TestPerformance(unittest.TestCase):
         self.assertEqual(perf.chunks[0].world, "overworld")
         self.assertEqual(perf.chunks[0].count, 289)
         self.assertEqual(perf.chunks[0].history, (250.0, 289.0))
-        self.assertEqual(perf.mspt_history, (2.5, 61.0))
+        # L'historique MSPT ne fait plus partie du snapshot : le graphe passe
+        # par mspt_range (une seule source), performance() ne sert que les
+        # valeurs instantanées des tuiles (revue du 25/08).
 
     def test_unreachable_raises_server_unavailable(self):
         def fetch(url):
@@ -173,9 +175,9 @@ class TestPerformance(unittest.TestCase):
         with self.assertRaises(ServerUnavailable):
             adapter.performance()
 
-    def test_mspt_history_uses_worst_of_window_and_requested_range(self):
-        """Le graphe échantillonne le PIRE de chaque fenêtre (un pic ne se
-        cache pas entre deux points) et suit la plage demandée."""
+    def test_mspt_range_fetches_players_on_same_window(self):
+        """P4 : les joueurs voyagent AVEC le MSPT — même fenêtre, même pas,
+        même garantie max_over_time (un passage éclair ne disparaît pas)."""
         urls = []
 
         def fetch(url):
@@ -183,8 +185,29 @@ class TestPerformance(unittest.TestCase):
             return self._fetch(url)
 
         adapter = PrometheusMetrics("http://prom:9090", [], fetch=fetch)
-        adapter.performance(72)
-        range_urls = [u for u in urls if "query_range" in u and "max_over_time" in u]
+        serie = adapter.mspt_range(0.0, 86400.0)
+        import urllib.parse as up
+        ranges = [up.parse_qs(up.urlsplit(u).query) for u in urls if "query_range" in u]
+        self.assertEqual(len(ranges), 2)
+        self.assertIn("minecraft_mspt", ranges[0]["query"][0])
+        self.assertIn("minecraft_status_players_online_count", ranges[1]["query"][0])
+        self.assertIn("max_over_time", ranges[1]["query"][0])
+        self.assertEqual(ranges[0]["step"], ranges[1]["step"])
+        self.assertEqual(serie.players, ((0.0, 2.5), (1.0, 61.0)))
+
+    def test_mspt_range_window_equals_step(self):
+        """Le graphe échantillonne le PIRE de chaque fenêtre (un pic ne se
+        cache pas entre deux points) : la fenêtre du max_over_time ÉGALE le
+        pas, à tous les niveaux de zoom. Ici 3 jours -> pas de 30 min."""
+        urls = []
+
+        def fetch(url):
+            urls.append(url)
+            return self._fetch(url)
+
+        adapter = PrometheusMetrics("http://prom:9090", [], fetch=fetch)
+        adapter.mspt_range(0.0, 72 * 3600.0)
+        range_urls = [u for u in urls if "query_range" in u and "minecraft_mspt" in u]
         self.assertTrue(range_urls)
         import urllib.parse as up
         query = up.parse_qs(up.urlsplit(range_urls[0]).query)
@@ -193,6 +216,21 @@ class TestPerformance(unittest.TestCase):
         self.assertEqual(query["step"][0], "1800")
         start, end = float(query["start"][0]), float(query["end"][0])
         self.assertAlmostEqual(end - start, 72 * 3600, delta=5)
+
+    def test_performance_ne_requete_plus_l_historique(self):
+        """R2 (revue du 25/08) : le snapshot des tuiles ne doit plus payer un
+        query_range MSPT dont le résultat serait jeté — le graphe a sa propre
+        source (mspt_range)."""
+        urls = []
+
+        def fetch(url):
+            urls.append(url)
+            return self._fetch(url)
+
+        adapter = PrometheusMetrics("http://prom:9090", [], fetch=fetch)
+        adapter.performance(24)
+        self.assertFalse([u for u in urls
+                          if "query_range" in u and "minecraft_mspt" in u])
 
 
 if __name__ == "__main__":

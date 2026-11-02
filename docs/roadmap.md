@@ -65,7 +65,7 @@ n'est développée qu'après validation explicite de Jeremy.
 
 | # | Amélioration | Intérêt | Effort | État |
 | --- | --- | --- | --- | --- |
-| 1 | Check d'image ET de réseau des one-shots au préflight | Refus bloquant (fail-closed pour la restauration) + diagnostic page Serveurs | Petit | ✅ Livré 18/07 |
+| 1 | Check d'image ET de réseau des one-shots au préflight | Refus bloquant (fail-closed pour la restauration) + diagnostic page Serveurs ; étendu à la maintenance le 02/11 (portier contrôlé AVANT l'arrêt du serveur — le contrôle était déclaré mais jamais appelé) | Petit | ✅ Livré 18/07, complété 02/11 |
 | 2 | Journal d'audit résistant aux lignes corrompues | Ligne illisible ignorée et comptée, la page s'affiche toujours | Petit | ✅ Livré 18/07 |
 | 3 | Sauvegardes hors NAS | Copie automatique (autre NAS ou S3) via conteneur rclone one-shot dédié — le rollback ne protège pas d'une panne physique du TerraMaster. **Préparation UI livrée 20/07** : étape « 4 · Destination » dans l'assistant de profil (icônes Local ✅ fonctionnel / Distant·Cloud visible mais désactivé « bientôt disponible » — décision Jeremy : on prépare la place, pas de backend tant que la vraie destination n'est pas choisie). `dest` reste dérivé (`profiles/<slug>`, jamais un chemin libre) — **la copie hors-site elle-même reste À FAIRE**, en attente du choix de destination (second NAS déjà monté ? S3-compatible ?). | Moyen | Préparé — copie hors-site à faire |
 | 4 | Seuils d'alertes configurables | MSPT, espace disque, durée d'incident réglables dans l'UI | Moyen | ✅ Livré 20/07 — formulaire owner sur `/performance` (`AlertThresholdsPort`, relu par PerfWatcher à chaque sonde sans redémarrage, badge/tuiles/légende du graphe suivent le seuil réglé) |
@@ -102,5 +102,5 @@ n'est développée qu'après validation explicite de Jeremy.
 | 4 | Favoris et protection d'archives | Épingler une sauvegarde, l'exclure explicitement de la rétention | Moyen | À faire |
 | 5 | Navigation mobile dédiée (étape 2) | Barre inférieure compacte façon app native (Accueil · Joueurs · Sauvegardes · ⋯) — après retours d'usage sur le menu replié 2e | Moyen | À faire |
 | 6 | Terminal amélioré | Pause du défilement, recherche, copie, commandes favorites | Moyen | À faire |
-| 7 | Graphiques annotés | Sauvegardes/redémarrages/màj marqués sur les courbes de performances | Moyen | À faire |
+| 7 | Graphiques annotés | Sauvegardes/redémarrages/màj marqués sur les courbes de performances | Moyen | ✅ Livré (repères sur le graphe MSPT ; enrichi le 24/08/2026 : défilement temporel, courbe joueurs, ralentissements cliquables) |
 | 8 | Palette Cmd/Ctrl+K | Accès rapide à une page, un joueur, une action autorisée | Moyen | À faire |

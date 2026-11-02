@@ -2,18 +2,24 @@
 console RCON, mise à jour contrôlée."""
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta, timezone
 
 import urllib.parse
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 
 from adapters.map_fetch import MapUnreachable
 from api.routes.common import _csrf, _current, _nav_context, _redirect_target, _require_csrf, flash_error, templates
 from config import APP_VERSION
 from domain.errors import DomainError, PermissionDenied
-from domain.model import Permission
+from domain.model import TICK_BUDGET_MS, Permission
 
 router = APIRouter()
 
@@ -1167,22 +1173,106 @@ def performance_page(request: Request):
     except DomainError:
         perf = None  # Prometheus injoignable -> page « indisponible »
     ctx["perf"] = perf
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
-    events = request.app.state.service.performance_events(user, since)
     thresholds = request.app.state.service.alert_thresholds(user)
     ctx["alert_thresholds"] = thresholds
-    ctx["mspt_chart"] = (
-        _mspt_chart(perf.mspt_history, hours, events=events, threshold_ms=thresholds.mspt_threshold_ms)
-        if perf else None
-    )
-    ctx["perf_range"] = range_key
+    # Le graphe passe TOUJOURS par mspt_range (une seule source pour la
+    # courbe, MSPT + joueurs sur le même axe) ; les tuiles restent sur le
+    # snapshot instantané. `?start=&end=` ancre la fenêtre dans le passé —
+    # ce sont les liens des incidents, utilisables SANS JavaScript ; le
+    # script les intercepte seulement pour éviter le rechargement.
+    fenetre_libre = False
+    try:
+        demande_debut = float(request.query_params["start"])
+        demande_fin = float(request.query_params["end"])
+        fenetre_libre = True
+    except (KeyError, ValueError):
+        maintenant = datetime.now().astimezone().timestamp()
+        demande_debut, demande_fin = maintenant - hours * 3600, maintenant
+    ctx["mspt_chart"] = None
+    if perf is not None:
+        try:
+            serie = request.app.state.service.mspt_range(user, demande_debut, demande_fin)
+            events = request.app.state.service.performance_events(
+                user, datetime.fromtimestamp(serie.start, timezone.utc))
+            ctx["mspt_chart"] = _mspt_chart(
+                serie.points, (serie.end - serie.start) / 3600.0, events=events,
+                threshold_ms=thresholds.mspt_threshold_ms,
+                fin=datetime.fromtimestamp(serie.end).astimezone(),
+                players=serie.players,
+            )
+        except DomainError:
+            pass  # tuiles affichées, courbe absente — dégradation partielle
+    ctx["perf_range"] = "" if fenetre_libre else range_key
     ctx["perf_ranges"] = _PERF_RANGE_CHOICES
+    # Ralentissements persistés par PerfWatcher : LA destination du
+    # défilement. Chaque entrée porte une fenêtre prête à ancrer le graphe
+    # (l'épisode, plus une marge égale de part et d'autre).
+    ralentissements = []
+    for incident, _actions in request.app.state.service.incidents(user):
+        if incident.kind != "performance":
+            continue
+        debut_i = incident.started_at.timestamp()
+        fin_i = (incident.ended_at or datetime.now(timezone.utc)).timestamp()
+        marge = max(fin_i - debut_i, 900.0)
+        ralentissements.append({
+            "quand": incident.started_at.astimezone().strftime("%d/%m %H:%M"),
+            "duree": _duree_incident(debut_i, fin_i, incident.ended_at is None),
+            "en_cours": incident.ended_at is None,
+            "debut": f"{debut_i - marge:.0f}",
+            "fin": f"{fin_i + marge:.0f}",
+        })
+        if len(ralentissements) >= 8:
+            break
+    ctx["ralentissements"] = ralentissements
     ctx["can_spark"] = user.can(Permission.RCON_RAW)
     ctx["can_manage_alerts"] = user.can(Permission.SERVER_MANAGE)
     ctx["spark_profiles"] = (request.app.state.service.spark_profiles(user)
                              if ctx["can_spark"] else [])
     ctx["profiling_seconds"] = request.query_params.get("profiling", "")
     return templates.TemplateResponse(request, "performance.html", ctx)
+
+
+@router.get("/fragments/mspt.json")
+def mspt_fragment(request: Request):
+    """Graphe MSPT sur une fenêtre arbitraire — ce que le composant de
+    défilement recharge en arrière-plan.
+
+    Le navigateur n'envoie que des BORNES : jamais de requête, jamais de pas
+    d'échantillonnage (§7 — le PromQL ne vient jamais de l'UI, et la
+    résolution reste choisie par l'adapter). Le service RAMÈNE toute borne
+    aberrante dans le possible et renvoie la fenêtre réellement servie ; on
+    la répercute ici pour que le composant sache où il a atterri quand il
+    bute sur la rétention."""
+    user = _current(request)
+    if user is None:
+        raise HTTPException(status_code=401)
+    svc = request.app.state.service
+    maintenant = datetime.now().astimezone().timestamp()
+    try:
+        demande_debut = float(request.query_params.get("start", ""))
+        demande_fin = float(request.query_params.get("end", ""))
+    except ValueError:
+        demande_debut, demande_fin = maintenant - 24 * 3600, maintenant
+    try:
+        serie = svc.mspt_range(user, demande_debut, demande_fin)
+        seuils = svc.alert_thresholds(user)
+        events = svc.performance_events(
+            user, datetime.fromtimestamp(serie.start, timezone.utc))
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except DomainError:
+        # Prometheus injoignable : le graphe le DIT au lieu de figer la
+        # dernière image, qui passerait pour une mesure fraîche.
+        return JSONResponse({"indisponible": True})
+    chart = _mspt_chart(
+        serie.points, (serie.end - serie.start) / 3600.0, events=events,
+        threshold_ms=seuils.mspt_threshold_ms,
+        fin=datetime.fromtimestamp(serie.end).astimezone(),
+        players=serie.players,
+    )
+    if chart is None:
+        return JSONResponse({"vide": True, "debut": serie.start, "fin": serie.end})
+    return JSONResponse(chart)
 
 
 _INCIDENT_KIND_LABELS = {
@@ -1333,15 +1423,62 @@ _WORLD_LABELS = {"overworld": "Surface", "the_nether": "Nether", "the_end": "End
 # Plages du graphe MSPT (clé URL -> heures) et libellés partagés route/template.
 _PERF_RANGES = {"24h": 24, "3j": 72, "7j": 168}
 _PERF_RANGE_CHOICES = (("24h", "24 h"), ("3j", "3 jours"), ("7j", "7 jours"))
-_PERF_TICK_FORMATS = {24: "%H:%M", 72: "%d/%m %Hh", 168: "%d/%m"}
-_PERF_WINDOW_LABELS = {24: "15 min", 72: "30 min", 168: "1 h"}
+# Graduations et libellé de fenêtre sont désormais DÉDUITS de la largeur
+# et du pas réels (_format_graduation / _libelle_duree) : en navigation
+# libre, la plage n'est plus l'une des trois valeurs figées.
 
 
 _PERF_EVENT_LABELS = {"backup": "Sauvegarde", "restart": "Redémarrage", "update": "Mise à jour"}
 
 
+def _duree_incident(debut: float, fin: float, en_cours: bool) -> str:
+    """« 12 min », « 1 h 05 » — durée d'un ralentissement, pour sa ligne."""
+    minutes = max(int(round((fin - debut) / 60)), 1)
+    if minutes < 60:
+        texte = f"{minutes} min"
+    else:
+        texte = f"{minutes // 60} h {minutes % 60:02d}" if minutes % 60 else f"{minutes // 60} h"
+    return texte + (" — en cours" if en_cours else "")
+
+
+def pct_budget(valeur_ms) -> str:
+    """« 38 % » du budget d'un tick (50 ms, constante du jeu). En dessous de
+    1 %, « <1 % » : un zéro laisserait croire à une absence de mesure."""
+    if valeur_ms is None:
+        return "–"
+    pct = valeur_ms / TICK_BUDGET_MS * 100.0
+    if 0 < pct < 1:
+        return "<1 %"
+    return f"{pct:.0f} %"
+
+
+templates.env.globals["pct_budget"] = pct_budget
+
+
+def _format_graduation(largeur_s: float) -> str:
+    """Format des graduations selon la LARGEUR de fenêtre, plus selon une
+    plage figée : en navigation libre la largeur est quelconque, et une
+    fenêtre de 30 jours graduée en « 14:00 » ne dirait pas de quel jour."""
+    if largeur_s <= 36 * 3600:
+        return "%H:%M"
+    if largeur_s <= 6 * 24 * 3600:
+        return "%d/%m %Hh"
+    return "%d/%m"
+
+
+def _libelle_duree(secondes: float) -> str:
+    """« 15 min », « 1 h », « 2 j » — pour annoncer la fenêtre du
+    max_over_time, qui suit désormais le zoom au lieu d'être figée."""
+    if secondes < 3600:
+        return f"{int(round(secondes / 60))} min"
+    if secondes < 86400:
+        heures = secondes / 3600
+        return f"{heures:.0f} h" if abs(heures - round(heures)) < 0.05 else f"{heures:.1f} h"
+    return f"{secondes / 86400:.0f} j"
+
+
 def _mspt_chart(history, hours=24, width=600.0, height=140.0, pad=6.0, events=(),
-                threshold_ms=50.0):
+                threshold_ms=50.0, fin=None, players=()):
     """Points SVG du graphe MSPT + ordonnée du seuil réglable (échelle
     commune — backlog fiabilité n° 4). Contrairement aux sparklines (échelle
     min-max), l'échelle inclut TOUJOURS 0 et le seuil : une ligne plate à
@@ -1352,23 +1489,84 @@ def _mspt_chart(history, hours=24, width=600.0, height=140.0, pad=6.0, events=()
     replacés sur le MÊME axe temporel que les points (`now` calculé une
     seule fois, ci-dessous) — sans ça, une petite dérive entre l'instant du
     scan d'audit et celui du rendu déplacerait le marqueur du mauvais côté
-    d'un pic MSPT."""
+    d'un pic MSPT.
+
+    `history` est une suite de couples (instant, valeur). Les points sont
+    placés à leur INSTANT RÉEL, pas à leur rang : Prometheus n'émet rien
+    quand il n'a pas mesuré, et un placement par rang contractait les trous
+    à zéro pixel en décalant tout leur passé (12 h d'erreur sur le trou du
+    31/07/2026). Un trou coupe la courbe au lieu d'être enjambé par un
+    trait droit qui ferait croire à des mesures inexistantes."""
     if not history or len(history) < 2:
         return None
-    top = max(max(history), threshold_ms * 1.1)
+    valeurs = [v for _, v in history]
+    top = max(max(valeurs), threshold_ms * 1.1)
     span = width - 2 * pad
-    step = span / (len(history) - 1)
 
     def y(value):
         return round(height - pad - (value / top) * (height - 2 * pad), 1)
 
-    now = datetime.now().astimezone()
-    fmt = _PERF_TICK_FORMATS.get(hours, "%H:%M")
+    # `fin` absent = fenêtre ancrée sur maintenant (comportement d'origine).
+    # Fournie, elle ancre la fenêtre dans le PASSÉ : c'est tout le défilement.
+    now = fin if fin is not None else datetime.now().astimezone()
+    since = now - timedelta(hours=hours)
+    debut, duree = since.timestamp(), hours * 3600.0
+
+    def x(at):
+        return round(pad + min(max((at - debut) / duree, 0.0), 1.0) * span, 1)
+
+    fmt = _format_graduation(duree)
     ticks = [(now - timedelta(hours=hours * (1.0 - f))).strftime(fmt)
              for f in (0.0, 0.25, 0.5, 0.75, 1.0)]
-    points = " ".join(f"{pad + i * step:.1f},{y(v)}" for i, v in enumerate(history))
 
-    since = now - timedelta(hours=hours)
+    # Pas nominal déduit des données (médiane des écarts) plutôt que supposé :
+    # l'adaptateur choisit le pas selon la plage, la vue n'a pas à le savoir.
+    ecarts = sorted(b - a for (a, _), (b, _) in zip(history, history[1:]))
+    pas = ecarts[len(ecarts) // 2] if ecarts else 0.0
+    coupure = pas * 2 if pas > 0 else float("inf")
+
+    segments, courant, precedent = [], [], None
+    for at, valeur in history:
+        if precedent is not None and at - precedent > coupure:
+            if len(courant) >= 2:
+                segments.append(" ".join(courant))
+            courant = []
+        courant.append(f"{x(at)},{y(valeur)}")
+        precedent = at
+    if len(courant) >= 2:
+        segments.append(" ".join(courant))
+    if not segments:
+        return None  # que des points isolés : aucune courbe honnête à tracer
+
+    # Courbe joueurs : SON échelle à elle (0 -> pic de la fenêtre, plancher 2
+    # pour qu'un joueur seul ne remplisse pas la hauteur), mêmes coupures aux
+    # trous que le MSPT. Elle répond au « pourquoi » que le MSPT seul n'a
+    # pas : qui était là quand ça a ramé.
+    joueurs_segments: list[str] = []
+    joueurs_max = 0
+    if players:
+        # ceil, pas int() : tronquer enverrait un pic à 2,5 joueurs (moyenne
+        # d'une fenêtre max_over_time) au-dessus du viewBox, hors du graphe,
+        # avec une légende « échelle 0–2 » mensongère (revue du 25/08).
+        joueurs_max = max(math.ceil(max(v for _, v in players)), 2)
+
+        def y_joueurs(value):
+            return round(height - pad - (value / joueurs_max) * (height - 2 * pad), 1)
+
+        ecarts_j = sorted(b - a for (a, _), (b, _) in zip(players, players[1:]))
+        pas_j = ecarts_j[len(ecarts_j) // 2] if ecarts_j else 0.0
+        coupure_j = pas_j * 2 if pas_j > 0 else float("inf")
+        courant_j, precedent_j = [], None
+        for at, valeur in players:
+            if precedent_j is not None and at - precedent_j > coupure_j:
+                if len(courant_j) >= 2:
+                    joueurs_segments.append(" ".join(courant_j))
+                courant_j = []
+            courant_j.append(f"{x(at)},{y_joueurs(valeur)}")
+            precedent_j = at
+        if len(courant_j) >= 2:
+            joueurs_segments.append(" ".join(courant_j))
+
     markers = []
     for timestamp, kind in events:
         at = timestamp.astimezone()
@@ -1383,14 +1581,21 @@ def _mspt_chart(history, hours=24, width=600.0, height=140.0, pad=6.0, events=()
         })
 
     return {
-        "points": points,
+        "segments": segments,
+        "trous": len(segments) - 1,
         "threshold_y": y(threshold_ms),
         "threshold_ms": threshold_ms,
-        "max": round(max(history), 1),
-        "over": any(v > threshold_ms for v in history),
+        "max": round(max(valeurs), 1),
+        "over": any(v > threshold_ms for v in valeurs),
         "ticks": ticks,
-        "window": _PERF_WINDOW_LABELS.get(hours, "15 min"),
+        "window": _libelle_duree(pas) if pas > 0 else "15 min",
         "markers": markers,
+        "joueurs": joueurs_segments,
+        "joueurs_max": joueurs_max,
+        # Fenêtre RÉELLEMENT affichée : le composant de défilement en a besoin
+        # pour savoir d'où il repart, et la page pour dire ce qu'elle montre.
+        "debut": debut,
+        "fin": since.timestamp() + duree,
     }
 
 

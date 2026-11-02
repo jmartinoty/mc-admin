@@ -6,7 +6,7 @@ réseau reste tenu par le portier `mc-doorman`, qui répond aux joueurs à la
 place du serveur (MOTD de maintenance dans la liste, refus de connexion
 expliqué). Sans lui, le joueur ne lit qu'un « connexion refusée » brut.
 
-Trois garde-fous structurent ce module :
+Quatre garde-fous structurent ce module :
 
 1. **L'état réel n'est jamais déduit.** « Sommes-nous en maintenance ? » se
    répond en interrogeant Docker (`DoormanPort.is_running()`), jamais une
@@ -21,6 +21,16 @@ Trois garde-fous structurent ce module :
    seul.** Si l'arrêt réussit mais que le portier échoue, le serveur reste
    arrêté, l'échec est audité ET notifié : `exit_maintenance` est le chemin de
    reprise (il relève un portier absent sans broncher, puis redémarre).
+4. **On n'arrête pas le serveur pour un portier qu'on sait inapte.** Le
+   portier est un conteneur pré-créé qui fige son image et ses réseaux : après
+   une mise à jour incomplète ou un réseau recréé, il ne tiendrait pas
+   l'adresse. Le contrôle d'alignement des one-shots est donc consulté AVANT
+   tout arrêt — à la demande, à l'armement d'une maintenance programmée, et
+   de nouveau à l'échéance d'une fermeture différée (le portier a pu se
+   périmer entre-temps). Un portier inapte = refus audité, serveur laissé
+   ouvert. Un état invérifiable ne bloque pas : l'arrêt échouerait alors de
+   lui-même, sans rien casser (seule la restauration, destructive, bloque
+   sur l'invérifiable).
 
 Permission dédiée `MAINTENANCE` plutôt que réemploi de `STOP` : `STOP` est un
 arrêt sec et définitif, la maintenance est une fermeture annoncée, réversible
@@ -80,6 +90,11 @@ def build_maintenance_messages(message: str, until: str = "") -> tuple[str, str]
     return motd, kick
 
 
+def _unfit_message(issues: list[str]) -> str:
+    return ("le portier de maintenance ne peut pas prendre le relais, le serveur "
+            "reste ouvert — " + " ; ".join(issues))
+
+
 class MaintenanceMixin:
     # ---- lecture ----
 
@@ -103,9 +118,35 @@ class MaintenanceMixin:
             active=active,
             pending=pending,
             motd=pending.motd if pending is not None else "",
+            restoring=active and self._restoring(),
         )
 
+    def _restoring(self) -> bool:
+        """Une restauration est-elle en attente ou en cours ? Restauration et
+        maintenance s'excluent : la restauration arrête et redémarre elle-même
+        le serveur, et depuis la V7b c'est SON portier qui tient l'adresse
+        pendant ce temps — un « Rouvrir » démarrerait Minecraft sur un monde à
+        moitié remplacé (revue du 02/11/2026). État illisible = prudence."""
+        in_progress = getattr(self, "_restore_in_progress", None)
+        if in_progress is None:
+            return False
+        try:
+            return bool(in_progress())
+        except Exception:  # noqa: BLE001
+            return True
+
     # ---- fermeture ----
+
+    def _doorman_unfit_issues(self) -> list[str]:
+        """Problèmes CONNUS du portier (image périmée, réseau disparu, conteneur
+        absent) — garde-fou n° 4. L'invérifiable n'en est pas un."""
+        integrity = getattr(self, "_worker_integrity", None)
+        if integrity is None:
+            return []
+        try:
+            return integrity.issues("maintenance")
+        except Exception:  # noqa: BLE001 — contrôle illisible = invérifiable
+            return []
 
     def enter_maintenance(
         self,
@@ -129,8 +170,23 @@ class MaintenanceMixin:
             )
         if grace_minutes < 0:
             raise InvalidDuration(f"délai invalide : {grace_minutes}min (doit être >= 0)")
+        # Avant le test « déjà en maintenance » : pendant une restauration, le
+        # portier en poste est le SIEN, et le message serait faux.
+        if self._restoring():
+            self._record(user, Permission.MAINTENANCE, "denied",
+                         f"phase=maintenance_blocked raison=restauration-en-cours "
+                         f"requested_by={user.username}")
+            raise MaintenanceUnavailable(
+                "une restauration est en cours : réessayer une fois terminée"
+            )
         if self._doorman.is_running():
             raise MaintenanceUnavailable("le serveur est déjà en maintenance")
+        unfit = self._doorman_unfit_issues()
+        if unfit:
+            self._record(user, Permission.MAINTENANCE, "denied",
+                         f"phase=maintenance_blocked raison=portier-inapte "
+                         f"requested_by={user.username}")
+            raise MaintenanceUnavailable(_unfit_message(unfit))
 
         motd, kick = build_maintenance_messages(
             self._sanitize_reason(message), self._sanitize_reason(until)
@@ -266,6 +322,14 @@ class MaintenanceMixin:
             raise MaintenanceUnavailable(
                 "mode maintenance indisponible : aucun portier configuré"
             )
+        if self._restoring():
+            self._record(user, Permission.MAINTENANCE, "denied",
+                         f"phase=maintenance_release_blocked raison=restauration-en-cours "
+                         f"requested_by={user.username}")
+            raise MaintenanceUnavailable(
+                "le serveur est fermé pour une restauration en cours : il "
+                "rouvrira de lui-même une fois celle-ci terminée"
+            )
         if self._pending_maintenance is not None:
             self._pending_maintenance.cancel()
 
@@ -316,6 +380,23 @@ class MaintenanceMixin:
             return
         now = self._clock.now()
         if pending.engage_at <= now:
+            # Une restauration a démarré pendant le délai : elle arrête et
+            # redémarre elle-même le serveur. La fermeture attend sa fin (une
+            # trace, une notification), puis s'engage au tick suivant.
+            if self._restoring():
+                hold_key = f"{pending.operation_id}::restauration"
+                if hold_key not in self._deferred_ops_announced:
+                    self._deferred_ops_announced.add(hold_key)
+                    self._record(system_user, Permission.MAINTENANCE, "allowed",
+                                 f"phase=maintenance_deferred raison=restauration-en-cours "
+                                 f"operation_id={pending.operation_id}")
+                    self._notify.notify(
+                        "Maintenance reportée",
+                        "Une restauration est en cours : la fermeture aura lieu "
+                        "dès qu'elle sera terminée.",
+                        "info", event="restart",
+                    )
+                return
             # Garde-fou « ne pas exécuter tant que joueurs connectés » : à
             # l'échéance, on ne déconnecte personne — la fermeture reste en
             # attente (jamais annulée) et s'engage dès le serveur vide.
@@ -326,7 +407,26 @@ class MaintenanceMixin:
                 )
                 return
             self._deferred_ops_announced.discard(pending.operation_id)
+            self._deferred_ops_announced.discard(f"{pending.operation_id}::restauration")
             self._pending_maintenance.cancel()
+            unfit = self._doorman_unfit_issues()
+            if unfit:
+                # Le portier s'est périmé pendant le délai de grâce : les
+                # joueurs ont été prévenus d'une fermeture qui n'aura pas lieu,
+                # on le leur dit, et l'owner apprend pourquoi.
+                try:
+                    self._game.say("✅ Maintenance annulée : le serveur reste ouvert.")
+                except Exception:  # noqa: BLE001
+                    pass
+                self._record(
+                    system_user, Permission.MAINTENANCE, "denied",
+                    f"phase=maintenance_blocked raison=portier-inapte "
+                    f"requested_by={pending.requested_by} "
+                    f"operation_id={pending.operation_id}",
+                )
+                self._notify.notify("Maintenance annulée", _unfit_message(unfit),
+                                    "error", event="restart")
+                return
             self._engage_maintenance(
                 system_user,
                 pending.motd,
@@ -461,6 +561,8 @@ class MaintenanceMixin:
                 return
         except Exception:  # noqa: BLE001 — lecture Docker : on tente quand même
             pass
+        if self._restoring():
+            return  # n'annonce rien pendant une restauration ; réessaie au tick suivant
         local_now = self._clock.now().astimezone()
         today = local_now.date().isoformat()
         for entry in entries:
@@ -480,6 +582,18 @@ class MaintenanceMixin:
             remaining = (target - local_now).total_seconds()
             if remaining > entry.lead_seconds:
                 continue  # pas encore dans la fenêtre de préavis
+            unfit = self._doorman_unfit_issues()
+            if unfit:
+                # Ne pas annoncer aux joueurs une fermeture qui n'aura pas
+                # lieu. Marquée comme passée pour aujourd'hui : un seul audit
+                # et une seule notification, pas un par tick.
+                self._scheduled_maintenance.mark_fired(entry.id, today)
+                self._record(system_user, Permission.MAINTENANCE, "denied",
+                             f"phase=maintenance_blocked raison=portier-inapte "
+                             f"programmee={entry.time_hhmm}")
+                self._notify.notify("Maintenance programmée non engagée",
+                                    _unfit_message(unfit), "error", event="restart")
+                return
             motd, kick = build_maintenance_messages(entry.message, entry.until)
             self._pending_maintenance.schedule(
                 target, system_user.username, motd, kick, remaining,

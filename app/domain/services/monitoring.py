@@ -5,6 +5,8 @@ ServiceCore (base.py), assemblé dans la façade AdminService (__init__.py).
 """
 from __future__ import annotations
 
+import math
+import time
 from datetime import datetime
 
 from domain.errors import (
@@ -18,6 +20,7 @@ from domain.model import (
     ContainerState,
     Incident,
     MetricReading,
+    MsptSeries,
     PerformanceSnapshot,
     ModInfo,
     ModUpdate,
@@ -86,6 +89,40 @@ class MonitoringMixin:
         if history_hours not in self.PERFORMANCE_RANGES:
             history_hours = 24
         return self._metrics.performance(history_hours)
+
+    # Bornes de la navigation libre dans le temps. `PERFORMANCE_RANGES` est
+    # une liste fermée parce que ses valeurs sont énumérables ; ici la borne
+    # est continue, on ne peut pas énumérer — alors on BORNE, et toujours
+    # côté serveur : le navigateur propose, le domaine dispose.
+    PERFORMANCE_SPAN_MIN = 900                 # 15 min — zoom maximal utile
+    PERFORMANCE_SPAN_MAX = 30 * 24 * 3600      # au-delà, le graphe n'est plus lisible
+    PERFORMANCE_RETENTION = 30 * 24 * 3600     # ce que Prometheus garde réellement
+
+    def mspt_range(self, user: User, start: float, end: float,
+                   now: float | None = None) -> MsptSeries:
+        """Série MSPT sur une fenêtre choisie — c'est ce qui permet de
+        remonter dans le passé au lieu de rester collé au présent.
+
+        Toute borne aberrante est RAMENÉE dans le domaine du possible plutôt
+        que refusée : une URL bricolée n'est pas une erreur (même esprit que
+        `performance_snapshot`, qui retombe sur 24 h). La fenêtre réellement
+        servie est retournée dans le résultat, pour que la vue affiche ce
+        qu'elle montre vraiment et non ce qu'elle a demandé."""
+        self._authorize(user, Permission.STATUS)
+        maintenant = time.time() if now is None else float(now)
+        plancher = maintenant - self.PERFORMANCE_RETENTION
+        try:
+            debut, fin = float(start), float(end)
+        except (TypeError, ValueError):
+            debut = fin = math.nan
+        if not (math.isfinite(debut) and math.isfinite(fin)):
+            debut, fin = maintenant - 24 * 3600, maintenant
+        fin = min(fin, maintenant)                                  # jamais le futur
+        fin = max(fin, plancher + self.PERFORMANCE_SPAN_MIN)        # ni avant la rétention
+        debut = min(max(debut, plancher), fin - self.PERFORMANCE_SPAN_MIN)
+        if fin - debut > self.PERFORMANCE_SPAN_MAX:
+            debut = fin - self.PERFORMANCE_SPAN_MAX
+        return self._metrics.mspt_range(debut, fin)
 
     def alert_thresholds(self, user: User) -> AlertThresholds:
         """Seuils d'alerte actuels de PerfWatcher — même barrière que le

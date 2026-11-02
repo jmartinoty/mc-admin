@@ -227,6 +227,8 @@ class ApiTestBase(unittest.TestCase):
         self.app_update_snooze = FakeAppUpdateSnooze()
         self.app_updater = FakeAppUpdater()
         self.self_image = FakeSelfImage()
+        from tests.fakes import FakeIncidents
+        self.incidents = FakeIncidents()
         self.service = AdminService(
             game=self.game,
             container=self.container,
@@ -267,6 +269,7 @@ class ApiTestBase(unittest.TestCase):
             app_update_snooze=self.app_update_snooze,
             app_updater=self.app_updater,
             self_image=self.self_image,
+            incidents=self.incidents,
         )
         app = create_app(
             settings,
@@ -1261,6 +1264,29 @@ class TestPassword(ApiTestBase):
         self.assertEqual(self.login("jeremy", "newpass123").status_code, 303)  # nouveau OK
         self.client.post("/logout", data={"csrf_token": self.page_csrf()})
         self.assertEqual(self.login("jeremy", "owner-pw").status_code, 401)     # ancien refusé
+
+    def _second_device(self, username, password):
+        """Un AUTRE appareil connecté au même compte (son propre cookie)."""
+        other = TestClient(self.app, follow_redirects=False)
+        token = self._csrf_from(other.get("/login").text)
+        res = other.post("/login", data={"username": username, "password": password,
+                                         "csrf_token": token})
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(other.get("/").status_code, 200)
+        return other
+
+    def test_change_logs_out_other_devices_but_not_this_one(self):
+        # Revue du 02/11/2026 : le soupçon de fuite est la raison n° 1 de
+        # changer son mot de passe — les autres sessions ne lui survivent pas.
+        self.login("jeremy", "owner-pw")
+        other = self._second_device("jeremy", "owner-pw")
+        self._change("owner-pw", "newpass123")
+        home = self.client.get("/")
+        self.assertEqual(home.status_code, 200)                      # cet appareil reste connecté
+        self.assertIn("autres appareils", home.text)                 # et l'apprend (flash)
+        res = other.get("/")
+        self.assertEqual(res.status_code, 303)                       # l'autre est déconnecté
+        self.assertEqual(res.headers["location"], "/login")
 
     def test_change_redirects_back_to_current_page(self):
         self.login("jeremy", "owner-pw")
@@ -2713,11 +2739,93 @@ class TestUsersPage(ApiTestBase):
         self.assertEqual(self.login("sam", "friend-pw").status_code, 401)   # l'overlay remplace le yaml
         self.assertEqual(self.login("sam", "nouveau-mdp-sam").status_code, 303)  # nouveau mdp actif
 
+    def test_owner_reset_password_logs_the_account_out_everywhere(self):
+        other = TestClient(self.app, follow_redirects=False)
+        token = self._csrf_from(other.get("/login").text)
+        other.post("/login", data={"username": "sam", "password": "friend-pw", "csrf_token": token})
+        self.assertEqual(other.get("/").status_code, 200)
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/users/reset-password", data={
+            "username": "sam", "password": "nouveau-mdp-sam", "csrf_token": self.page_csrf()})
+        self.assertEqual(other.get("/").status_code, 303)            # sam déconnecté partout
+        self.assertIn("sessions_revoked=1", self.audit.entries[-1].detail)
+        self.assertEqual(self.client.get("/users").status_code, 200)  # l'owner, lui, reste
+
+    def test_owner_resetting_own_password_keeps_current_session(self):
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/users/reset-password", data={
+            "username": "jeremy", "password": "nouveau-mdp-j", "csrf_token": self.page_csrf()})
+        self.assertEqual(self.client.get("/users").status_code, 200)
+
     def test_delete_guards(self):
         self.login("jeremy", "owner-pw")
         self.client.post("/actions/users/delete",
                          data={"username": "jeremy", "csrf_token": self.page_csrf()})
         self.assertIn("son propre compte", self.client.get("/users").text)
+
+    # ---- traces d'un compte hors users.json (revue du 02/11/2026) ----
+
+    def _traces(self, username):
+        """2FA active + une session ouverte pour `username`, sans passer par
+        l'UI (seul l'état laissé derrière compte ici)."""
+        totp_store = self.client.app.state.totp
+        totp_store.set_pending(username, "JBSWY3DPEHPK3PXP")
+        totp_store.confirm(username)
+        return self.client.app.state.sessions.register(username, "192.0.2.10", "test")
+
+    def test_delete_forgets_twofa_and_sessions(self):
+        self.login("jeremy", "owner-pw")
+        sid = self._traces("sam")
+        self.client.post("/actions/users/delete",
+                         data={"username": "sam", "csrf_token": self.page_csrf()})
+        self.assertFalse(self.client.app.state.totp.is_enabled("sam"))
+        self.assertFalse(self.client.app.state.sessions.is_valid(sid, "sam"))
+        self.assertIn("credentials_removed=true", self.audit.entries[-1].detail)
+
+    def test_recreated_account_does_not_inherit_old_traces(self):
+        # Restes laissés par une suppression d'AVANT ce correctif.
+        sid = self._traces("copain")
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/users/add", data={
+            "username": "copain", "role": "friend", "password": "motdepasse-copain",
+            "csrf_token": self.page_csrf()})
+        self.assertFalse(self.client.app.state.sessions.is_valid(sid, "copain"))
+        token = CSRF_RE.search(self.client.get("/").text).group(1)
+        self.client.post("/logout", data={"csrf_token": token})
+        res = self.login("copain", "motdepasse-copain")
+        self.assertEqual(res.status_code, 303)                     # pas d'ancienne 2FA exigée
+        self.assertNotIn("/login/totp", res.headers.get("location", ""))
+
+    def test_owner_resets_twofa_of_a_friend(self):
+        self._traces("sam")
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/users").text
+        self.assertIn("/actions/users/reset-2fa", page)
+        self.assertEqual(page.count("Réinitialiser la 2FA"), 1)    # sam seulement (2FA active)
+        self.client.post("/actions/users/reset-2fa",
+                         data={"username": "sam", "csrf_token": self.page_csrf()})
+        self.assertFalse(self.client.app.state.totp.is_enabled("sam"))
+        self.assertIn("phase=twofa_reset account=sam", self.audit.entries[-1].detail)
+        self.assertNotIn("Réinitialiser la 2FA", self.client.get("/users").text)
+
+    def test_reset_twofa_never_targets_oneself(self):
+        # Sa propre 2FA se coupe depuis la page Compte, mot de passe à l'appui.
+        self.login("jeremy", "owner-pw")
+        self._traces("jeremy")                                     # activée APRÈS la connexion
+        page = self.client.get("/users").text
+        self.assertNotIn("Réinitialiser la 2FA", page)              # pas de bouton sur soi
+        self.client.post("/actions/users/reset-2fa",
+                         data={"username": "jeremy", "csrf_token": self.page_csrf()})
+        self.assertTrue(self.client.app.state.totp.is_enabled("jeremy"))
+
+    def test_reset_twofa_is_owner_only(self):
+        self._traces("sam")
+        self.login("paul", "admin-pw")
+        res = self.client.post("/actions/users/reset-2fa",
+                               data={"username": "sam", "csrf_token": self.page_csrf()})
+        self.assertEqual(res.status_code, 403)
+        self.assertTrue(self.client.app.state.totp.is_enabled("sam"))
+        self.assertEqual(self.audit.entries[-1].outcome, "denied")
 
     def test_delete_migrated_account_survives_restart(self):
         self.login("jeremy", "owner-pw")
@@ -2727,7 +2835,7 @@ class TestUsersPage(ApiTestBase):
         self.assertIsNone(self.password_overrides.get("sam"))
         audit_page = self.client.get("/audit").text
         self.assertIn("Compte supprimé", audit_page)
-        self.assertIn("ancien mot de passe supprimé", audit_page)
+        self.assertIn("anciens identifiants supprimés", audit_page.lower())
         self.assertIn("oui", audit_page)
         token = CSRF_RE.search(self.client.get("/").text).group(1)
         self.client.post("/logout", data={"csrf_token": token})
@@ -2812,6 +2920,145 @@ class TestUsersStoreFormat(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_HTTP_STACK, "fastapi/httpx requis")
+class TestGrapheDefilable(ApiTestBase):
+    """L'endpoint que le composant de défilement recharge en arrière-plan.
+
+    Le navigateur n'envoie que des BORNES — jamais de requête ni de pas
+    d'échantillonnage (§7 : le PromQL ne vient jamais de l'UI).
+    """
+
+    URL = "/fragments/mspt.json"
+
+    def test_non_connecte_refuse(self):
+        self.assertEqual(self.client.get(self.URL).status_code, 401)
+
+    def test_renvoie_des_segments_et_la_fenetre_servie(self):
+        import time
+        self.login("jeremy", "owner-pw")
+        fin = time.time()
+        data = self.client.get(f"{self.URL}?start={fin - 86400}&end={fin}").json()
+        self.assertIn("segments", data)
+        self.assertTrue(data["segments"])
+        self.assertAlmostEqual(data["fin"] - data["debut"], 86400, delta=2)
+
+    def test_une_fenetre_dans_le_passe_est_servie_telle_quelle(self):
+        """LE point de la fonctionnalité : la fenêtre ne finit plus forcément
+        maintenant."""
+        import time
+        self.login("jeremy", "owner-pw")
+        fin = time.time() - 5 * 86400
+        data = self.client.get(f"{self.URL}?start={fin - 86400}&end={fin}").json()
+        self.assertAlmostEqual(data["fin"], fin, delta=2)
+        self.assertLess(data["fin"], time.time() - 4 * 86400)
+
+    def test_le_futur_est_ramene_a_maintenant(self):
+        import time
+        self.login("jeremy", "owner-pw")
+        futur = time.time() + 30 * 86400
+        data = self.client.get(f"{self.URL}?start={futur - 86400}&end={futur}").json()
+        self.assertLessEqual(data["fin"], time.time() + 2)
+
+    def test_bornes_absentes_ou_illisibles_ne_plantent_pas(self):
+        self.login("jeremy", "owner-pw")
+        for params in ("", "?start=&end=", "?start=demain&end=hier"):
+            reponse = self.client.get(self.URL + params)
+            self.assertEqual(reponse.status_code, 200, msg=params)
+            self.assertIn("segments", reponse.json(), msg=params)
+
+    def test_prometheus_injoignable_le_dit(self):
+        self.metrics._available = False
+        self.login("jeremy", "owner-pw")
+        self.assertTrue(self.client.get(self.URL).json().get("indisponible"))
+
+    def test_le_seuil_est_transmis_au_client(self):
+        """Le seuil voyage AVEC les données : le composant redessine la
+        ligne pointillée sans avoir à deviner ni à recharger la page."""
+        self.login("jeremy", "owner-pw")
+        data = self.client.get(self.URL).json()
+        self.assertEqual(data["threshold_ms"], 50.0)      # défaut du domaine
+        self.assertIn("threshold_y", data)                # et son ordonnée, prête à tracer
+
+
+class TestLotPerf(ApiTestBase):
+    """Lot P0/P3/P4/P5 (24/08/2026) : pourcentage de budget, courbe joueurs,
+    ralentissements qui ancrent le graphe, badge piloté par les données."""
+
+    def _ralentissement(self, il_y_a_heures=5.0, duree_min=12):
+        from datetime import datetime, timedelta, timezone
+        from domain.model import Incident
+        debut = datetime.now(timezone.utc) - timedelta(hours=il_y_a_heures)
+        return Incident(id="mspt:1", subject="mspt", kind="performance",
+                        label="Lag serveur", started_at=debut,
+                        ended_at=debut + timedelta(minutes=duree_min))
+
+    def test_les_ralentissements_ancrent_le_graphe(self):
+        self.incidents._recent = [self._ralentissement()]
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/performance").text
+        self.assertIn("Ralentissements détectés", page)
+        self.assertIn("data-perf-ancre", page)
+        # le lien est un VRAI lien : la page sert ?start=&end= sans JavaScript
+        self.assertIn("/performance?start=", page)
+
+    def test_un_incident_de_disponibilite_n_est_pas_liste(self):
+        from datetime import datetime, timezone
+        from domain.model import Incident
+        self.incidents._recent = [Incident(
+            id="server:1", subject="server", kind="availability", label="Serveur",
+            started_at=datetime.now(timezone.utc), ended_at=datetime.now(timezone.utc))]
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/performance").text
+        self.assertNotIn("Ralentissements détectés", page)
+
+    def test_fenetre_libre_servie_sans_javascript(self):
+        """?start=&end= ancre la courbe côté serveur : le lien d'un incident
+        fonctionne même sans script (amélioration progressive)."""
+        import time
+        self.login("jeremy", "owner-pw")
+        fin = int(time.time() - 5 * 86400)
+        page = self.client.get(f"/performance?start={fin - 86400}&end={fin}").text
+        # la fenêtre affichée est bien celle demandée (à la correction près)
+        self.assertIn(f'data-fin="{fin}.0"', page)
+        # aucun sélecteur de plage n'est actif : la fenêtre n'en est aucune
+        self.assertNotIn('class="rangelink on"', page)
+
+    def test_le_fragment_transporte_la_courbe_joueurs(self):
+        import time
+        self.login("jeremy", "owner-pw")
+        fin = time.time()
+        data = self.client.get(f"/fragments/mspt.json?start={fin - 86400}&end={fin}").json()
+        self.assertIn("joueurs", data)
+        self.assertTrue(data["joueurs"])           # le fake sert 2 joueurs constants
+        self.assertGreaterEqual(data["joueurs_max"], 2)
+        self.assertIn("over", data)                # le badge se redessine avec ça
+
+    def test_le_badge_dit_vrai_dans_les_deux_sens(self):
+        """R1 (revue du 25/08) : l'ancien test passait par accident — le
+        texte « seuil dépassé » figurait dans la copy du formulaire, pas dans
+        le badge. Ici la série pilote le verdict, dans les deux sens."""
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/performance").text
+        self.assertIn('class="badge ok" data-perf-badge>sous le seuil', page)
+        self.metrics.mspt_valeur = 60.0
+        page = self.client.get("/performance").text
+        self.assertIn('class="badge ko" data-perf-badge>seuil dépassé', page)
+
+    def test_pourcentage_de_budget(self):
+        from api.routes.dashboard import pct_budget
+        self.assertEqual(pct_budget(None), "–")
+        self.assertEqual(pct_budget(0.4), "<1 %")
+        self.assertEqual(pct_budget(19.0), "38 %")
+        self.assertEqual(pct_budget(67.6), "135 %")
+
+    def test_les_tuiles_gardent_les_millisecondes(self):
+        """Demande explicite : « c'est bien de les avoir quelque part au cas
+        où » — le pourcentage est la lecture principale, les ms restent lues."""
+        self.login("jeremy", "owner-pw")
+        page = self.client.get("/performance").text
+        self.assertIn("(3.2 ms)", page)            # MSPT moyen du fake
+        self.assertIn("(41.0 ms)", page)           # pire tick du fake
+
+
 class TestPerformancePage(ApiTestBase):
     def test_page_shows_tiles_top_and_chart(self):
         self.login("jeremy", "owner-pw")
@@ -2819,8 +3066,9 @@ class TestPerformancePage(ApiTestBase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("perf-ranges", page.text)                    # sélecteur 24h/3j/7j
         self.assertIn("perf-axis", page.text)                      # repères horaires
-        self.assertIn("fenêtre de 15 min", page.text)              # légende honnête
-        self.assertIn("seuil dépassé", page.text)                  # pic à 60 ms dans le fake
+        # 24 h à l'échelle de pas libre = 10 min (86400/600 = 144 points ≤ 150)
+        self.assertIn("fenêtre de 10 min", page.text)              # légende honnête
+        pass  # badge couvert par TestLotPerf (les deux verdicts, pilotés par la série)                  # pic à 60 ms dans le fake
         self.assertIn("perf-threshold", page.text)                 # ligne des 50 ms
         self.assertIn("zombie", page.text)                         # top entités
         self.assertIn("Nether", page.text)                         # nom de monde traduit
@@ -2876,6 +3124,7 @@ class TestPerformancePage(ApiTestBase):
     def test_empty_top_has_honest_message(self):
         from domain.model import PerformanceSnapshot
         self.metrics.perf = PerformanceSnapshot(tps=20.0, mspt_mean=1.0)
+        self.metrics.serie_vide = True
         self.login("jeremy", "owner-pw")
         page = self.client.get("/performance").text
         self.assertIn("Aucune entité chargée", page)
@@ -3722,3 +3971,97 @@ class TestNomDeCompte(ApiTestBase):
                           follow_redirects=False)
         self.assertEqual(res.status_code, 303, "le compte hérité doit pouvoir se connecter")
         self.assertEqual(client.get("/", follow_redirects=False).status_code, 200)
+
+
+class TestTuilesCliquables(ApiTestBase):
+    """Les mesures du tableau de bord mènent à leur page de détail (demande de
+    Jeremy, 23/08/2026) : un clic sur une tuile ouvre Performances, sauf le
+    décompte des joueurs qui ouvre leur page."""
+
+    def setUp(self):
+        super().setUp()
+        self.login("jeremy", "owner-pw")
+
+    def test_les_tuiles_sont_des_liens(self):
+        page = self.client.get("/").text
+        self.assertIn('class="metric metric-lien"', page)
+
+    def test_les_mesures_menent_aux_performances(self):
+        page = self.client.get("/").text
+        self.assertIn('href="/performance"', page)
+
+    def test_le_decompte_des_joueurs_mene_a_leur_page(self):
+        """Cliquer sur « Joueurs en ligne » pour atterrir sur des graphes de
+        MSPT n'aurait pas de sens."""
+        page = self.client.get("/").text
+        debut = page.find("Joueurs en ligne")
+        self.assertGreater(debut, 0, "tuile des joueurs absente")
+        bloc = page[max(0, debut - 700):debut]
+        self.assertIn('href="/players"', bloc)
+
+    def test_chaque_tuile_annonce_sa_destination(self):
+        """Un lien sans intitulé explicite laisse deviner où l'on va."""
+        page = self.client.get("/").text
+        self.assertIn('title="Voir le détail', page)
+
+
+class TestRubriquesDuMenu(ApiTestBase):
+    """Classement des rubriques (choix de Jeremy, 23/08/2026) : le tableau de
+    bord en tête, puis Jouer, Protéger, Administrer. Chaque groupe répond à
+    une question, là où le premier n'avait pas même de nom et mêlait
+    consultation, modération et configuration."""
+
+    ATTENDU = {
+        "Jouer": ("Carte", "Joueurs", "Mods", "Jeu"),
+        "Protéger": ("Surveillance", "Performances", "Sauvegardes", "Journal",
+                     "Notifications"),
+        "Administrer": ("Serveurs", "Comptes", "Jetons d'API"),
+    }
+
+    def _menu(self, page: str) -> list[tuple[str, str]]:
+        """(groupe, entrée) dans l'ordre d'affichage."""
+        import re
+        groupe = "(en tête)"
+        entrees = []
+        for ligne in page.splitlines():
+            if "nav-group-label" in ligne:
+                trouve = re.search(r">([^<]+)</div>", ligne)
+                if trouve:
+                    groupe = trouve.group(1)
+            fin = re.search(r"</svg>([A-Za-zÀ-ÿ' ]+)</a>", ligne)
+            if fin:
+                entrees.append((groupe, fin.group(1).strip()))
+        return entrees
+
+    def test_le_tableau_de_bord_reste_en_tete(self):
+        self.login("jeremy", "owner-pw")
+        menu = self._menu(self.client.get("/").text)
+        self.assertEqual(menu[0], ("(en tête)", "Tableau de bord"))
+
+    def test_chaque_entree_est_dans_sa_rubrique(self):
+        self.login("jeremy", "owner-pw")
+        menu = dict((entree, groupe) for groupe, entree in self._menu(self.client.get("/").text))
+        for groupe, entrees in self.ATTENDU.items():
+            for entree in entrees:
+                with self.subTest(entree=entree):
+                    self.assertEqual(menu.get(entree), groupe)
+
+    def test_les_performances_voisinent_la_surveillance(self):
+        """Les deux répondent à « est-ce que ça tourne bien ? » : elles vivaient
+        aux deux bouts du menu."""
+        self.login("jeremy", "owner-pw")
+        entrees = [e for _g, e in self._menu(self.client.get("/").text)]
+        self.assertEqual(abs(entrees.index("Performances") - entrees.index("Surveillance")), 1)
+
+    def test_aucune_rubrique_vide_pour_un_compte_restreint(self):
+        """Un titre de rubrique sans aucune entrée dessous serait une coquille
+        visible — c'est le piège de ce genre de réorganisation."""
+        self.login("sam", "friend-pw")   # STATUS + LOGS_VIEW seulement
+        menu = self._menu(self.client.get("/").text)
+        groupes_affiches = {g for g, _e in menu}
+        import re
+        titres = set(re.findall(r'nav-group-label">([^<]+)<', self.client.get("/").text))
+        for titre in titres:
+            with self.subTest(titre=titre):
+                self.assertIn(titre, groupes_affiches,
+                              f"la rubrique « {titre} » s'affiche sans aucune entrée")
