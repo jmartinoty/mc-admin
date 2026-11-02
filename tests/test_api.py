@@ -3575,6 +3575,36 @@ class TestAppUpdate(ApiTestBase):
         self.assertEqual(self.app_updater.starts, 0)
         self.assertIn("restauration-en-cours", self.audit.entries[-1].detail)
 
+    def test_apply_refused_during_maintenance(self):
+        # L'updater recrée le portier : pendant une maintenance, il l'arrêterait
+        # et le serveur resterait fermé sans réponse aux joueurs (02/11/2026).
+        from tests.fakes import FakeDoorman
+        self._announce()
+        self.service._doorman = FakeDoorman(running=True)
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(self.app_updater.starts, 0)
+        self.assertIn("maintenance-en-cours", self.audit.entries[-1].detail)
+        self.assertIn("MAJ-01", self.client.get("/").text)
+
+    def test_apply_refused_when_doorman_state_unreadable(self):
+        from tests.fakes import FakeDoorman
+        self._announce()
+        doorman = FakeDoorman()
+        doorman.status_fail = True
+        self.service._doorman = doorman
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(self.app_updater.starts, 0)
+
+    def test_apply_allowed_when_doorman_is_idle(self):
+        from tests.fakes import FakeDoorman
+        self._announce()
+        self.service._doorman = FakeDoorman(running=False)
+        self.login("jeremy", "owner-pw")
+        self.client.post("/actions/app-update", data={"csrf_token": self.page_csrf()})
+        self.assertEqual(self.app_updater.starts, 1)
+
     def test_apply_works_without_backup_tooling(self):
         # Install partielle (pas d'outil de sauvegarde) : un port absent n'est
         # pas une opération en cours — bug attrapé au banc réel du 19/07.

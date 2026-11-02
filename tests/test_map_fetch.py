@@ -302,3 +302,48 @@ class TestFluxEvenements(unittest.TestCase):
     def test_un_fichier_reste_compresse(self):
         vu, _s, _h, _c = self._capture("maps/world/tile.prbm")
         self.assertIn("gzip", vu["accept_encoding"].lower())
+
+
+class TestCorpsFermable(unittest.TestCase):
+    """Le corps relayé se ferme de l'extérieur : c'est ce qui permet au relais
+    de libérer la connexion vers la carte quand le navigateur s'en va."""
+
+    def _ouvrir(self, reponse, chemin="maps/monde/live/sse"):
+        _s, _h, corps = open_map_path("http://minecraft:8100", chemin,
+                                      opener=lambda request, timeout: reponse)
+        return corps
+
+    def test_fermer_avant_toute_lecture_ferme_la_connexion(self):
+        # Un générateur jamais commencé ignorait sa fermeture : la connexion
+        # restait ouverte si le navigateur partait avant le premier morceau.
+        reponse = _FakeResponse(body=b"event: x\n\n", content_type="text/event-stream")
+        corps = self._ouvrir(reponse)
+        corps.close()
+        self.assertTrue(reponse.closed)
+        self.assertEqual(list(corps), [])          # plus rien n'est lu ensuite
+
+    def test_fermer_en_cours_de_flux_puis_une_seconde_fois(self):
+        class _Compte(_FakeResponse):
+            fermetures = 0
+
+            def close(self):
+                type(self).fermetures += 1
+                super().close()
+
+        reponse = _Compte(body=b"a\nb\nc\n", content_type="text/event-stream")
+        corps = self._ouvrir(reponse)
+        self.assertEqual(next(corps), b"a\n")
+        corps.close()
+        corps.close()
+        self.assertEqual(_Compte.fermetures, 1)    # sans effet la 2e fois
+
+    def test_une_erreur_de_lecture_ferme_la_connexion(self):
+        class _Coupee(_FakeResponse):
+            def readline(self):
+                raise ConnectionResetError("coupée")
+
+        reponse = _Coupee(content_type="text/event-stream")
+        corps = self._ouvrir(reponse)
+        with self.assertRaises(ConnectionResetError):
+            next(corps)
+        self.assertTrue(reponse.closed)

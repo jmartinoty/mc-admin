@@ -7,6 +7,24 @@ fix, même hors release.
 
 ## 2026-11-02
 
+- **Appliquer une mise à jour de mc-admin pendant une maintenance aurait
+  arrêté le portier** — trouvé pendant le test réel de la v0.22.0, jamais
+  déclenché. L'updater recrée tous les one-shots, portier compris : en
+  pleine maintenance, le serveur serait resté fermé sans plus personne
+  pour répondre aux joueurs, et l'application n'aurait plus su qu'il était
+  en maintenance. Fix : la mise à jour est refusée (et auditée) tant que le
+  portier est en poste ou que son état est illisible — même règle que pour
+  la mise à jour du jeu.
+- **Quitter la page Carte laissait une connexion orpheline vers BlueMap** —
+  constaté en production pendant le test réel de la v0.22.0 : un joueur en
+  ligne, BlueMap émet en continu (une cinquantaine d'événements en 20 s) ;
+  après le départ du navigateur, mc-admin relâchait bien son thread mais
+  gardait la connexion vers BlueMap ouverte, ses données s'accumulant sans
+  lecteur — libérée seulement ~9 min plus tard. Le serveur web interrompt
+  l'envoi sans fermer ce qu'il itérait, et un générateur ne se ferme pas
+  tout seul. Fix : un corps relayé fermable de l'extérieur, fermé par le
+  relais dès la déconnexion (deux mécanismes indépendants, testés chacun
+  seul avec un vrai uvicorn).
 - **Changer un mot de passe ne déconnectait personne** — relevé par la
   revue du 02/11. Ni la réinitialisation par l'owner ni le changement de
   son propre mot de passe ne touchaient aux sessions ouvertes : un compte

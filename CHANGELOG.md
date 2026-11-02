@@ -4,6 +4,23 @@ Les versions suivent [semver](https://semver.org/lang/fr/). La série 0.x est
 une bêta publique : l'outil est utilisé en production chez son auteur, mais
 des morceaux annoncés manquent encore (voir la roadmap dans `docs/`).
 
+## v0.22.1 — 2026-11-02
+
+Aucune modification du Compose. **Rouvrir le serveur avant d'appliquer
+cette mise à jour s'il est en maintenance** : la version précédente ne le
+vérifiait pas encore.
+
+### Corrections
+
+- **Quitter la page Carte laissait une connexion ouverte vers la carte.**
+  Pendant qu'un joueur est en ligne, la carte envoie des nouvelles en
+  continu ; une fois la page quittée, la connexion restait ouverte sans
+  personne pour la lire, une dizaine de minutes. Elle est désormais fermée
+  dès que la page se ferme.
+- **La mise à jour de l'application est refusée pendant une maintenance.**
+  Elle relance aussi le portier : en pleine maintenance, le serveur serait
+  resté fermé sans plus personne pour répondre aux joueurs.
+
 ## v0.22.0 — 2026-11-02
 
 Aucune modification du Compose : la mise à jour s'applique depuis le bouton

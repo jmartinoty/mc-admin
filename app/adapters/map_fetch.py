@@ -18,7 +18,6 @@ import posixpath
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator
 
 _CHUNK = 64 * 1024
 
@@ -105,7 +104,7 @@ def open_map_path(base_url: str, path: str, query: str = "",
                   if_none_match: str = "", if_modified_since: str = "",
                   accept_encoding: str = "",
                   silence_flux: float = _SILENCE_FLUX_SECONDES,
-                  ) -> tuple[int, dict[str, str], Iterator[bytes]]:
+                  ) -> tuple[int, dict[str, str], RelayedBody]:
     """Ouvre un fichier de la carte : (status, en-têtes à relayer, chunks).
 
     Le CACHE NAVIGATEUR est préservé dans les deux sens : BlueMap envoie
@@ -166,24 +165,53 @@ def open_map_path(base_url: str, path: str, query: str = "",
         # doit jamais servir du gzip à un client qui ne l'a pas demandé.
         headers.setdefault("Vary", "Accept-Encoding")
 
-    def chunks() -> Iterator[bytes]:
-        try:
-            while True:
-                # Un flux se lit LIGNE PAR LIGNE : le protocole SSE est
-                # découpé ainsi, et chaque ligne doit partir aussitôt.
-                try:
-                    block = res.readline() if flux else res.read(_CHUNK)
-                except TimeoutError:
-                    if not flux:
-                        raise
-                    break  # silence prolongé : fin propre, BlueMap se reconnecte
-                if not block:
-                    break
-                yield block
-        finally:
-            res.close()
+    return res.status, headers, RelayedBody(res, flux)
 
-    return res.status, headers, chunks()
+
+class RelayedBody:
+    """Corps relayé, lu morceau par morceau, et FERMABLE de l'extérieur.
+
+    Un générateur ne suffisait pas : sa clause `finally` ne s'exécute que si
+    on le ferme explicitement, ou quand Python finit par le ramasser. Quand le
+    navigateur quittait la page Carte en plein flux, le serveur web abandonnait
+    l'itération sans fermer le générateur : la connexion vers BlueMap restait
+    ouverte, orpheline, ses données s'accumulant sans lecteur (constaté en
+    production le 02/11/2026). `close()` ferme la réponse amont directement,
+    même si l'itération n'a jamais commencé ; elle est sans effet la 2e fois.
+    """
+
+    def __init__(self, response, flux: bool) -> None:
+        self._res = response
+        self._flux = flux
+        self._closed = False
+
+    def __iter__(self) -> "RelayedBody":
+        return self
+
+    def __next__(self) -> bytes:
+        if self._closed:
+            raise StopIteration
+        try:
+            # Un flux se lit LIGNE PAR LIGNE : le protocole SSE est découpé
+            # ainsi, et chaque ligne doit partir aussitôt.
+            block = self._res.readline() if self._flux else self._res.read(_CHUNK)
+        except TimeoutError:
+            if not self._flux:
+                self.close()
+                raise
+            block = b""  # silence prolongé : fin propre, BlueMap se reconnecte
+        except BaseException:
+            self.close()
+            raise
+        if not block:
+            self.close()
+            raise StopIteration
+        return block
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._res.close()
 
 
 # Seuls en-têtes relayés au navigateur : le contenu, son encodage et sa

@@ -236,11 +236,19 @@ class UpdateMixin:
                            "mise à jour via git pull + redéploiement, pas par l'image")
         return True, ""
 
+    @staticmethod
+    def _doorman_engaged_or_unknown(doorman) -> bool:
+        try:
+            return bool(doorman.is_running())
+        except Exception:  # noqa: BLE001 — état illisible = prudence
+            return True
+
     def apply_app_update(self, user: User) -> None:
         """Déclenche le one-shot mc-admin-updater. Garde-fous dans l'ordre :
         une mise à jour doit être DISPONIBLE, applicable sur cette install,
-        et aucune sauvegarde/restauration ne doit être en cours (l'updater
-        recrée mc-admin ET les one-shots — pas pendant qu'ils travaillent)."""
+        et aucune sauvegarde, restauration ni maintenance ne doit être en
+        cours (l'updater recrée mc-admin ET les one-shots, portier compris —
+        pas pendant qu'ils travaillent)."""
         self._authorize(user, Permission.UPDATE)
         known = self._app_update_state.get() if self._app_update_state else None
         if known is None:
@@ -257,8 +265,17 @@ class UpdateMixin:
         # et TOUT refus passe par l'audit (bug attrapé au banc réel 19/07 :
         # _port_running(None) levait RestoreUnavailable sans trace).
         busy = ""
+        doorman = getattr(self, "_doorman", None)
         if self._restore_in_progress():
             busy, message = "restauration-en-cours", "une restauration est en cours — réessayer une fois terminée"
+        elif doorman is not None and self._doorman_engaged_or_unknown(doorman):
+            # L'updater RECRÉE le portier avec les autres one-shots : pendant
+            # une maintenance, il l'arrêterait — serveur fermé sans plus
+            # personne pour répondre aux joueurs, et l'application ne saurait
+            # plus qu'il est en maintenance (revue du 02/11/2026).
+            busy, message = ("maintenance-en-cours",
+                             "le serveur est en maintenance — le rouvrir avant de mettre "
+                             "à jour l'application")
         elif self._profile_backup is not None:
             try:
                 if self._profile_backup.is_running():

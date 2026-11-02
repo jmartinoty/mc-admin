@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 import urllib.parse
 
 from fastapi import APIRouter, Form, HTTPException, Request
+from starlette.background import BackgroundTask
+from starlette.concurrency import iterate_in_threadpool
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
@@ -686,8 +688,32 @@ def map_embed(request: Request, path: str = ""):
             accept_encoding=request.headers.get("accept-encoding", ""))
     except MapUnreachable as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return relayed_map_response(status, headers, chunks)
+
+
+def relayed_map_response(status: int, headers: dict[str, str], body) -> StreamingResponse:
+    """Réponse du relais de carte, qui ferme la connexion vers la carte dès
+    que le navigateur s'en va (testée avec un vrai serveur, cf.
+    tests/test_map_relais_deconnexion.py).
+
+    Quand le navigateur se déconnecte, le serveur web interrompt l'envoi sans
+    fermer ce qu'il itérait : la connexion vers BlueMap restait ouverte,
+    orpheline (constaté le 02/11/2026). Deux fermetures, l'une ou l'autre
+    suffit : la clause `finally` du relais (l'interruption le traverse) et la
+    tâche de fin de réponse, que Starlette exécute aussi après une
+    déconnexion."""
     media_type = headers.pop("Content-Type", "application/octet-stream")
-    return StreamingResponse(chunks, status_code=status, media_type=media_type, headers=headers)
+    close = getattr(body, "close", None) or (lambda: None)  # corps injecté sans close()
+
+    async def relay():
+        try:
+            async for chunk in iterate_in_threadpool(body):
+                yield chunk
+        finally:
+            close()
+
+    return StreamingResponse(relay(), status_code=status, media_type=media_type,
+                             headers=headers, background=BackgroundTask(close))
 
 
 @router.post("/actions/map/test")
